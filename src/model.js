@@ -77,7 +77,42 @@ export class LifeClosedError extends LifeError {
 }
 
 /** Schema version written into `meta.schema_version` by this build. */
-export const LIFE_SCHEMA_VERSION = '2'
+export const LIFE_SCHEMA_VERSION = '3'
+
+/** Allowed durable wake statuses. Claimed/admitted are never "executed". */
+export const WAKE_STATUSES = Object.freeze([
+  'pending',
+  'claimed',
+  'admitted',
+  'executed',
+  'uncertain',
+  'superseded',
+  'failed',
+])
+
+/** Allowed wake kinds for 0.2.0; idle wakes are deliberately absent. */
+export const WAKE_KINDS = Object.freeze(['intent_due'])
+
+const DSH_SESSION_SCOPE = /^session:session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/**
+ * Whether a trusted scope is the exact DSH Session shape this segment may
+ * target. Anything else remains local-only.
+ * @param {unknown} value - candidate scope.
+ * @returns {boolean} whether the scope can map to a DSH Session id.
+ */
+export function isDshSessionScope(value) {
+  return typeof value === 'string' && DSH_SESSION_SCOPE.test(value)
+}
+
+/**
+ * Stable wake id for one reconsideration event.
+ * @param {string} eventId - durable outbox event id.
+ * @returns {string} stable wake primary key.
+ */
+export function wakeIdForEvent(eventId) {
+  return `wake:${eventId}`
+}
 
 /** Allowed intent statuses. Intents are never implicitly "completed". */
 export const INTENT_STATUSES = Object.freeze(['active', 'cancelled'])

@@ -1,11 +1,18 @@
 # amadeus-life 交接
 
+## 最新检查点：SQLite v3 wake ledger（2026-10-25）
+
+- 原 cordis Creator 会话完成 v2→v3 增量迁移与 `intent_due` 持久 wake ledger；Codex 独立审查发现并先复现三项缺口（过期 admitted 状态回滚、非法 Session 形状候选饥饿、已确认本地事件仍可领取），同一 Creator 会话定点返工并增加 admission 竞争回归。`node --test test/wake-ledger.test.js test/quality-gaps.test.js test/life-core.test.js test/revision.test.js` 为 66/66，`npm test` 各文件 18+20+9+19 项通过，退出码均 0。
+- 在独立 Desktop 停止且原会话空闲后，已对原 `life.sqlite`、WAL、SHM 做本机忽略目录的冷备份并逐文件校验哈希；启动同一隔离 Desktop 后，真实开发库从 v2 到 v3，`PRAGMA integrity_check=ok`，9 意图、4 事件、8 活动与租约仍在。不可变业务字段与冷备份逐行摘要一致。原 Creator Session 可恢复，Life bundle active；无生产操作或真实平台外发。详见 [v3 验收](docs/verification/WAKE_LEDGER_V3_2026-10-25.md)。
+- `wake_requests` 目前只是可信持久准备、领取、准入与记录接口；尚未接入 Host 自动投递或真实 Session 执行证据。包版本仍 0.1.0；下一段实现 Host adapter，不能把本次 ledger 验收称为 Life 0.2.0 或 v1.0 完成。
+
 ## 最新检查点：0.1.0 四项质量修复（2026-10-25）
 
 - 原 cordis Creator 会话继续完成主要实现；失败回归独立提交 `889be0a`，修复独立提交 `92fc18b`。Codex 审查中补充了多活动/单焦点和合法单向关联回归并交回同一会话返工。
 - `node --test test/quality-gaps.test.js test/life-core.test.js test/revision.test.js`：47/47 通过，exit 0；`npm test` 同样通过。原 29 项仍通过。详见 [质量修复验收](docs/verification/QUALITY_FIX_2026-10-25.md)。
 - 真实隔离 DSH 中服务与 9 工具加载、停用/启用、卸载/重装均通过；强制重启后持久意图保留，运行活动进入 `unknown`，不伪造完成。临时诊断探针已移除；原 Session、Workspace、SQLite 和开发包保留。
 - 包仍为 0.1.0，SQLite schema 2。尚无真正 DSH 自动唤醒、可信 Provider 回执协议、统一 Persona、注意力调度或预算；这些属于已授权的连续 Life v1.0 开发，下一步先形成 0.2.0 架构和真实 Session Controller 接入任务。下文旧交接记录是修复前状态，不覆盖此检查点。
+- 后续隔离 Host API 探针已证实：无人工新输入的 `sessionController.prompt` 能实际触发完成 turn，但来源记为 `user`；按官方 Schedule 范式构造完整 user-role 消息，以 `amadeus-life` 来源、wakeId、`resolveAgent → followup → sessions.flush` 可持久投递并完成 turn。初次探针遗漏 `role`/`id` 导致一个合成测试 Session 的 turn 失败，该 Session 原样保留；修正后新长期测试 Session 成功。私有探针已卸载。Life 代码尚未接入此能力，下一步是持久 wake ledger、权限/预算/过期检查和真实适配。主仓 `docs/verification/LIFE_HOST_WAKE_SMOKE_2026-10-25.md` 记录边界。
 
 日期：2026-10-25。状态：0.1.0 开发版核心已验收；尚未发布 release、npm 包或部署生产。
 

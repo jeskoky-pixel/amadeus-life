@@ -138,6 +138,13 @@ function failClosedLife(health, error) {
     listOutbox: fail,
     acknowledgeEvent: fail,
     requestExternalAction: fail,
+    prepareDueWakes: fail,
+    claimNextWake: fail,
+    markWakeAdmitted: fail,
+    markWakeExecuted: fail,
+    markWakeUncertain: fail,
+    getWake: fail,
+    listWakes: fail,
     close: () => {},
   }
 }
@@ -248,6 +255,7 @@ export function apply(ctx, config = {}) {
   }
   try {
     core.markInterruptedAsUnknown()
+    core.markInterruptedWakesUncertain()
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error))
     try {
@@ -311,6 +319,13 @@ export function apply(ctx, config = {}) {
     listOutbox: (options) => core.listOutbox(options),
     acknowledgeEvent: (eventId, options) => core.acknowledgeEvent(eventId, options),
     requestExternalAction: (input) => core.requestExternalAction(input),
+    prepareDueWakes: (options) => core.prepareDueWakes(options),
+    claimNextWake: (options) => core.claimNextWake(options),
+    markWakeAdmitted: (id, options) => core.markWakeAdmitted(id, options),
+    markWakeExecuted: (id, options) => core.markWakeExecuted(id, options),
+    markWakeUncertain: (id, options) => core.markWakeUncertain(id, options),
+    getWake: (id) => core.getWake(id),
+    listWakes: (options) => core.listWakes(options),
     getHealth: () => core.getHealth(),
     getScopedHealth: (options) => core.getScopedHealth(options),
     close: () => dispose(),

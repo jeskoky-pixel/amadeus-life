@@ -14,6 +14,7 @@ import {
   ACTIVITY_STATUSES,
   INTENT_STATUSES,
   LIFE_SCHEMA_VERSION,
+  WAKE_STATUSES,
   LifeClosedError,
   LifeInvalidTransitionError,
   LifeNotFoundError,
@@ -23,13 +24,19 @@ import {
   LifeValidationError,
   assertActivityTransition,
   assertInteger,
+  isDshSessionScope,
   normalizeTimestamp,
   reconsiderationEventId,
   requireString,
+  wakeIdForEvent,
 } from './model.js'
 
 const EVENT_STATUSES = Object.freeze(['pending', 'acknowledged', 'superseded'])
 const INTENT_PATCH_FIELDS = Object.freeze(['description', 'reviewAt', 'relatedActivityId'])
+const DSH_HEX = '[0-9a-f]'
+// Strict SQL-side prefilter before LIMIT so malformed session-shaped scopes
+// cannot occupy the bounded batch. JS revalidates with the same strict shape.
+const DSH_SCOPE_GLOB = `session:session-${DSH_HEX.repeat(8)}-${DSH_HEX.repeat(4)}-${DSH_HEX.repeat(4)}-${DSH_HEX.repeat(4)}-${DSH_HEX.repeat(12)}`
 
 /**
  * Convert one `intents` row into the public intent view.
@@ -66,6 +73,36 @@ function activityView(row) {
     intentId: row.intent_id,
     ownerScope: row.owner_scope,
     evidenceRefs: JSON.parse(String(row.evidence_json)),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+/**
+ * Convert one `wake_requests` row into the public wake view.
+ * @param {Record<string, unknown>} row - database row.
+ * @returns {Record<string, unknown>} wake view.
+ */
+function wakeView(row) {
+  return {
+    id: row.id,
+    kind: row.kind,
+    eventId: row.event_id,
+    intentId: row.intent_id,
+    intentRevision: row.intent_revision,
+    contextScope: row.context_scope,
+    targetSessionId: row.target_session_id,
+    authorizationRef: row.authorization_ref,
+    status: row.status,
+    claimOwner: row.claim_owner,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at,
+    expiresAt: row.expires_at,
+    messageId: row.message_id,
+    admittedAt: row.admitted_at,
+    executedAt: row.executed_at,
+    executedTurnSeq: row.executed_turn_seq,
+    lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -390,6 +427,12 @@ export class LifeCore {
         intentId,
         revision,
       )
+      this.store.run(
+        `UPDATE wake_requests SET status = 'superseded', last_error = 'intent revision changed', updated_at = ?
+         WHERE intent_id = ? AND status IN ('pending', 'claimed', 'uncertain')`,
+        updatedAt,
+        intentId,
+      )
       return intentView(this.store.get('SELECT * FROM intents WHERE id = ?', intentId))
     })
   }
@@ -441,6 +484,12 @@ export class LifeCore {
       }
       this.store.run(
         "UPDATE intent_events SET status = 'superseded' WHERE intent_id = ? AND status = 'pending'",
+        intentId,
+      )
+      this.store.run(
+        `UPDATE wake_requests SET status = 'superseded', last_error = 'intent cancelled', updated_at = ?
+         WHERE intent_id = ? AND status IN ('pending', 'claimed', 'uncertain')`,
+        this.iso(),
         intentId,
       )
       return intentView(this.store.get('SELECT * FROM intents WHERE id = ?', intentId))
@@ -905,6 +954,10 @@ export class LifeCore {
       this.store.all('SELECT status, COUNT(*) AS n FROM intent_events GROUP BY status'),
       EVENT_STATUSES,
     )
+    const wakes = statusCounts(
+      this.store.all('SELECT status, COUNT(*) AS n FROM wake_requests GROUP BY status'),
+      WAKE_STATUSES,
+    )
     return {
       state: this.degraded ? 'degraded' : 'ok',
       schemaVersion: LIFE_SCHEMA_VERSION,
@@ -913,7 +966,7 @@ export class LifeCore {
       lastTickAt: this.lastTickAt,
       lastTickError: this.lastTickError,
       tickCount: this.tickCount,
-      counts: { intents, activities, events },
+      counts: { intents, activities, events, wakes },
     }
   }
 
@@ -943,12 +996,16 @@ export class LifeCore {
       ),
       EVENT_STATUSES,
     )
+    const wakes = statusCounts(
+      this.store.all('SELECT status, COUNT(*) AS n FROM wake_requests WHERE context_scope = ? GROUP BY status', callerScope),
+      WAKE_STATUSES,
+    )
     return {
       state: this.degraded ? 'degraded' : 'ok',
       schemaVersion: LIFE_SCHEMA_VERSION,
       lastTickAt: this.lastTickAt,
       tickCount: this.tickCount,
-      counts: { intents, activities, events },
+      counts: { intents, activities, events, wakes },
     }
   }
 
@@ -1004,6 +1061,397 @@ export class LifeCore {
       const result = this.store.run("DELETE FROM runtime_leases WHERE key = 'adapter' AND owner_id = ?", id)
       return Number(result.changes) === 1
     })
+  }
+
+  /**
+   * Prepare durable intent-due wakes from eligible pending reconsideration
+   * events. Only same-scope, DSH-shaped, tool-authorized intents are eligible;
+   * everything else stays local-only. Bounded and idempotent per event id.
+   * @param {{limit?: number}} [options] - bounded batch size.
+   * @returns {{created: Record<string, unknown>[], examined: number}} created wakes.
+   */
+  prepareDueWakes({ limit = 10 } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const batch = assertInteger(limit, 'limit', { min: 1, max: 100 })
+    const nowMs = this.nowMs()
+    const nowIso = this.iso(nowMs)
+    return this.store.writeTransaction(() => {
+      const candidates = this.store.all(
+        `SELECT e.id AS event_id, e.intent_id
+         FROM intent_events e
+         JOIN intents i ON i.id = e.intent_id
+         WHERE e.type = 'reconsideration' AND e.status = 'pending'
+           AND i.status = 'active'
+           AND i.revision = e.intent_revision
+           AND i.review_at <= ?
+           AND i.context_scope GLOB ?
+           AND i.authorization_ref = 'life-tool:' || i.context_scope
+           AND NOT EXISTS (SELECT 1 FROM wake_requests w WHERE w.event_id = e.id)
+         ORDER BY e.created_at ASC, e.id ASC
+         LIMIT ?`,
+        nowIso,
+        DSH_SCOPE_GLOB,
+        batch,
+      )
+      /** @type {Record<string, unknown>[]} */
+      const created = []
+      for (const candidate of candidates) {
+        const row = this.store.get(
+          `SELECT e.type AS event_type, e.status AS event_status, e.intent_revision AS event_revision,
+                  i.id AS intent_id, i.revision AS intent_revision, i.status AS intent_status,
+                  i.review_at, i.context_scope, i.authorization_ref
+           FROM intent_events e JOIN intents i ON i.id = e.intent_id
+           WHERE e.id = ? AND i.id = ?`,
+          candidate.event_id,
+          candidate.intent_id,
+        )
+        if (row === undefined) continue
+        if (row.event_type !== 'reconsideration' || row.event_status !== 'pending') continue
+        if (row.intent_status !== 'active') continue
+        if (Number(row.intent_revision) !== Number(row.event_revision)) continue
+        if (Date.parse(String(row.review_at)) > nowMs) continue
+        if (!isDshSessionScope(row.context_scope)) continue
+        if (row.authorization_ref !== `life-tool:${row.context_scope}`) continue
+        const id = wakeIdForEvent(String(candidate.event_id))
+        const targetSessionId = String(row.context_scope).slice('session:'.length)
+        const result = this.store.run(
+          `INSERT OR IGNORE INTO wake_requests
+            (id, kind, event_id, intent_id, intent_revision, context_scope, target_session_id,
+             authorization_ref, status, claim_owner, attempts, next_attempt_at, created_at, updated_at)
+           VALUES (?, 'intent_due', ?, ?, ?, ?, ?, ?, 'pending', NULL, 0, ?, ?, ?)`,
+          id,
+          candidate.event_id,
+          row.intent_id,
+          row.intent_revision,
+          row.context_scope,
+          targetSessionId,
+          row.authorization_ref,
+          nowIso,
+          nowIso,
+          nowIso,
+        )
+        if (Number(result.changes) === 1) created.push(this.#wakeView(id))
+      }
+      return { created, examined: candidates.length }
+    })
+  }
+
+  /**
+   * Atomically claim one due pending wake for this owner. Stale or invalid wakes
+   * are marked superseded and skipped, never delivered. Bounded scan.
+   * @param {{ownerId: string}} options - trusted claimant identity.
+   * @returns {Record<string, unknown> | null} claimed wake or null.
+   */
+  claimNextWake({ ownerId } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const owner = requireString(ownerId, 'ownerId', 200)
+    const nowMs = this.nowMs()
+    const nowIso = this.iso(nowMs)
+    return this.store.writeTransaction(() => {
+      const candidates = this.store.all(
+        `SELECT id FROM wake_requests
+         WHERE status = 'pending' AND next_attempt_at <= ?
+         ORDER BY next_attempt_at ASC, created_at ASC, id ASC
+         LIMIT 25`,
+        nowIso,
+      )
+      for (const candidate of candidates) {
+        const wake = this.store.get('SELECT * FROM wake_requests WHERE id = ?', candidate.id)
+        if (wake === undefined || wake.status !== 'pending') continue
+        const invalidReason = this.#wakeInvalidReason(wake, nowMs)
+        if (invalidReason !== null) {
+          this.store.run(
+            `UPDATE wake_requests SET status = 'superseded', last_error = ?, updated_at = ?
+             WHERE id = ? AND status = 'pending'`,
+            invalidReason,
+            nowIso,
+            candidate.id,
+          )
+          continue
+        }
+        const result = this.store.run(
+          `UPDATE wake_requests SET status = 'claimed', claim_owner = ?, attempts = attempts + 1, updated_at = ?
+           WHERE id = ? AND status = 'pending'`,
+          owner,
+          nowIso,
+          candidate.id,
+        )
+        if (Number(result.changes) === 1) return this.#wakeView(String(candidate.id))
+      }
+      return null
+    })
+  }
+
+  /**
+   * Record that a claimed wake was admitted to the target Session. Admission is
+   * not execution.
+   * @param {string} id - wake id.
+   * @param {{ownerId: string, messageId: string}} options - owner and durable message id.
+   * @returns {Record<string, unknown>} admitted wake.
+   */
+  markWakeAdmitted(id, { ownerId, messageId } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const owner = requireString(ownerId, 'ownerId', 200)
+    const message = requireString(messageId, 'messageId', 200)
+    const outcome = this.store.writeTransaction(() => {
+      const row = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (row === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (row.status !== 'claimed') {
+        throw new LifeInvalidTransitionError(`wake in status "${String(row.status)}" cannot be admitted`, {
+          wakeId,
+          status: row.status,
+        })
+      }
+      if (row.claim_owner !== owner) {
+        throw new LifeUnauthorizedError('wake is claimed by a different owner', { wakeId })
+      }
+      const event = this.store.get('SELECT status FROM intent_events WHERE id = ?', row.event_id)
+      if (event === undefined || event.status !== 'pending') {
+        // Local acknowledgement won the race with admission: persist the
+        // supersession, then fail outside the transaction.
+        this.store.run(
+          `UPDATE wake_requests
+           SET status = 'superseded', last_error = 'local event no longer pending', updated_at = ?
+           WHERE id = ? AND status = 'claimed' AND claim_owner = ?`,
+          this.iso(),
+          wakeId,
+          owner,
+        )
+        return { stale: true }
+      }
+      const result = this.store.run(
+        `UPDATE wake_requests SET status = 'admitted', message_id = ?, admitted_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'claimed' AND claim_owner = ?`,
+        message,
+        this.iso(),
+        this.iso(),
+        wakeId,
+        owner,
+      )
+      if (Number(result.changes) !== 1) {
+        throw new LifeInvalidTransitionError('wake claim changed during admission', { wakeId })
+      }
+      return { stale: false }
+    })
+    if (outcome.stale) {
+      throw new LifeStaleResultError('wake event was consumed locally before admission', { wakeId })
+    }
+    return this.#wakeView(wakeId)
+  }
+
+  /**
+   * Record execution evidence for an admitted wake. Requires the admitted
+   * message id and a still-active same-revision intent; a changed or cancelled
+   * intent supersedes the wake instead of reporting execution.
+   * @param {string} id - wake id.
+   * @param {{messageId: string, turnSeq: number}} options - evidence coordinates.
+   * @returns {Record<string, unknown>} executed wake.
+   */
+  markWakeExecuted(id, { messageId, turnSeq } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const message = requireString(messageId, 'messageId', 200)
+    const turn = assertInteger(turnSeq, 'turnSeq', { min: 1 })
+    const outcome = this.store.writeTransaction(() => {
+      const row = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (row === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (row.status !== 'admitted') {
+        throw new LifeInvalidTransitionError(`wake in status "${String(row.status)}" cannot be executed`, {
+          wakeId,
+          status: row.status,
+        })
+      }
+      if (row.message_id !== message) {
+        throw new LifeValidationError('execution evidence message id does not match the admitted wake', {
+          wakeId,
+          expectedMessageId: row.message_id,
+          messageId: message,
+        })
+      }
+      const intent = this.store.get(
+        'SELECT id, status, revision, context_scope FROM intents WHERE id = ?',
+        row.intent_id,
+      )
+      const intentValid =
+        intent !== undefined &&
+        intent.status === 'active' &&
+        Number(intent.revision) === Number(row.intent_revision) &&
+        intent.context_scope === row.context_scope
+      if (!intentValid) {
+        // Persist the supersession before surfacing the stale error; throwing
+        // inside the transaction would roll the update back.
+        this.store.run(
+          `UPDATE wake_requests SET status = 'superseded', last_error = 'intent changed before execution evidence', updated_at = ?
+           WHERE id = ? AND status = 'admitted'`,
+          this.iso(),
+          wakeId,
+        )
+        return { stale: true, intentId: row.intent_id }
+      }
+      const result = this.store.run(
+        `UPDATE wake_requests SET status = 'executed', executed_at = ?, executed_turn_seq = ?, updated_at = ?
+         WHERE id = ? AND status = 'admitted' AND message_id = ?`,
+        this.iso(),
+        turn,
+        this.iso(),
+        wakeId,
+        message,
+      )
+      if (Number(result.changes) !== 1) {
+        throw new LifeInvalidTransitionError('wake admission changed during execution evidence', { wakeId })
+      }
+      return { stale: false }
+    })
+    if (outcome.stale) {
+      throw new LifeStaleResultError('wake intent changed before execution evidence', {
+        wakeId,
+        intentId: outcome.intentId,
+      })
+    }
+    return this.#wakeView(wakeId)
+  }
+
+  /**
+   * Mark a claimed wake uncertain. It will not be claimed again automatically;
+   * later reconciliation must decide.
+   * @param {string} id - wake id.
+   * @param {{ownerId: string, reason: string}} options - owner and reason.
+   * @returns {Record<string, unknown>} uncertain wake.
+   */
+  markWakeUncertain(id, { ownerId, reason } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const owner = requireString(ownerId, 'ownerId', 200)
+    const why = requireString(reason, 'reason', 500)
+    return this.store.writeTransaction(() => {
+      const row = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (row === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (row.status !== 'claimed') {
+        throw new LifeInvalidTransitionError(`wake in status "${String(row.status)}" cannot be uncertain`, {
+          wakeId,
+          status: row.status,
+        })
+      }
+      if (row.claim_owner !== owner) {
+        throw new LifeUnauthorizedError('wake is claimed by a different owner', { wakeId })
+      }
+      const result = this.store.run(
+        `UPDATE wake_requests SET status = 'uncertain', last_error = ?, updated_at = ?
+         WHERE id = ? AND status = 'claimed' AND claim_owner = ?`,
+        why,
+        this.iso(),
+        wakeId,
+        owner,
+      )
+      if (Number(result.changes) !== 1) {
+        throw new LifeInvalidTransitionError('wake claim changed during uncertainty update', { wakeId })
+      }
+      return this.#wakeView(wakeId)
+    })
+  }
+
+  /**
+   * Startup recovery: a claimed wake from a previous runtime is uncertain, not
+   * automatically redelivered.
+   * @returns {number} number of wakes moved to uncertain.
+   */
+  markInterruptedWakesUncertain() {
+    this.#ensureOpen()
+    this.#assertWritable()
+    return this.store.writeTransaction(() => {
+      const result = this.store.run(
+        `UPDATE wake_requests
+         SET status = 'uncertain', last_error = 'runtime owner changed before admission', updated_at = ?
+         WHERE status = 'claimed'`,
+        this.iso(),
+      )
+      return Number(result.changes)
+    })
+  }
+
+  /**
+   * Read one wake (trusted read for validation tooling; no model tool).
+   * @param {string} id - wake id.
+   * @returns {Record<string, unknown>} wake view.
+   */
+  getWake(id) {
+    this.#ensureOpen()
+    return this.#wakeView(requireString(id, 'id', 200))
+  }
+
+  /**
+   * List wakes (trusted read for validation tooling; no model tool).
+   * @param {{status?: string, limit?: number}} [options] - optional filters.
+   * @returns {Record<string, unknown>[]} wake views.
+   */
+  listWakes({ status, limit = 100 } = {}) {
+    this.#ensureOpen()
+    const batch = assertInteger(limit, 'limit', { min: 1, max: 500 })
+    if (status !== undefined && !WAKE_STATUSES.includes(status)) {
+      throw new LifeValidationError(`status must be one of ${WAKE_STATUSES.join(', ')}`)
+    }
+    const rows =
+      status === undefined
+        ? this.store.all('SELECT * FROM wake_requests ORDER BY created_at ASC, id ASC LIMIT ?', batch)
+        : this.store.all(
+            'SELECT * FROM wake_requests WHERE status = ? ORDER BY created_at ASC, id ASC LIMIT ?',
+            status,
+            batch,
+          )
+    return rows.map(wakeView)
+  }
+
+  /**
+   * Re-validate a wake against its event and intent before delivery.
+   * @param {Record<string, unknown>} wake - wake row.
+   * @param {number} nowMs - current clock.
+   * @returns {string | null} invalidation reason, or null when deliverable.
+   */
+  #wakeInvalidReason(wake, nowMs) {
+    const event = this.store.get(
+      'SELECT id, type, status, intent_id, intent_revision FROM intent_events WHERE id = ?',
+      wake.event_id,
+    )
+    if (event === undefined) return 'event missing'
+    if (event.type !== 'reconsideration') return 'event kind mismatch'
+    if (event.status !== 'pending') return 'event not pending'
+    if (event.intent_id !== wake.intent_id || Number(event.intent_revision) !== Number(wake.intent_revision)) {
+      return 'event identity mismatch'
+    }
+    if (!isDshSessionScope(wake.context_scope)) return 'scope is not a DSH session scope'
+    if (wake.authorization_ref !== `life-tool:${wake.context_scope}`) return 'authorization ref mismatch'
+    if (wake.target_session_id !== String(wake.context_scope).slice('session:'.length)) {
+      return 'target session mismatch'
+    }
+    if (wake.expires_at !== null && Date.parse(String(wake.expires_at)) <= nowMs) return 'wake expired'
+    const intent = this.store.get(
+      'SELECT id, status, revision, review_at, context_scope, authorization_ref FROM intents WHERE id = ?',
+      wake.intent_id,
+    )
+    if (intent === undefined) return 'intent missing'
+    if (intent.status !== 'active') return 'intent not active'
+    if (Number(intent.revision) !== Number(wake.intent_revision)) return 'intent revision changed'
+    if (intent.context_scope !== wake.context_scope) return 'intent scope changed'
+    if (intent.authorization_ref !== wake.authorization_ref) return 'intent authorization changed'
+    if (Date.parse(String(intent.review_at)) > nowMs) return 'review time no longer due'
+    return null
+  }
+
+  /**
+   * Read one wake as a view.
+   * @param {string} id - wake id.
+   * @returns {Record<string, unknown>} wake view.
+   */
+  #wakeView(id) {
+    const row = this.store.get('SELECT * FROM wake_requests WHERE id = ?', id)
+    if (row === undefined) throw new LifeNotFoundError(`wake "${id}" was not found`, { wakeId: id })
+    return wakeView(row)
   }
 
   /**

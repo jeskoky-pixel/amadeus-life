@@ -12,7 +12,7 @@ QQ 的水位、发送和回执所有权不交给 Life；Life 关闭不能阻断�
 
 - 远端：https://github.com/jeskoky-pixel/amadeus-life
 - 默认分支：main
-- 可见性：私有
+- 可见性：公开（2026-10-25 用户明确要求）
 - 开发顺序：P0
 - 本地位置：主项目目录下 plugins/amadeus-life/，属于独立 Git 仓库。
 

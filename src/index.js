@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { LifeCore } from './core.js'
+import { WakeHost } from './wake-host.js'
 import {
   LIFE_SCHEMA_VERSION,
   LifeError,
@@ -24,6 +25,7 @@ import {
   LifeUnauthorizedError,
   LifeValidationError,
   assertInteger,
+  isDshSessionScope,
   requireString,
 } from './model.js'
 
@@ -36,6 +38,63 @@ export const inject = ['tools']
 const SCOPE_PREFIX = 'session:'
 const UNCONSTRAINED_OBJECT = Object.freeze({ type: 'object', additionalProperties: true })
 const RESERVED_ARGS = new Set(['scope', 'trustedEvidence', 'authorizationRef', 'ownerScope', 'contextScope'])
+const DEFAULT_WAKE_INTERVAL_MS = 60_000
+
+/**
+ * Validate the administrator-only wake delivery configuration. Defaults to
+ * disabled; a model or peer can never change it at runtime.
+ * @param {unknown} raw - row config value.
+ * @returns {{enabled: boolean, allowedSessionIds: string[], intervalMs: number, maxPerDrive: number}} config.
+ */
+function parseWakeDelivery(raw) {
+  if (raw === undefined) {
+    return { enabled: false, allowedSessionIds: [], intervalMs: DEFAULT_WAKE_INTERVAL_MS, maxPerDrive: 1 }
+  }
+  if (typeof raw !== 'object' || raw === null) {
+    throw new LifeValidationError('wakeDelivery must be an object')
+  }
+  if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') {
+    throw new LifeValidationError('wakeDelivery.enabled must be a boolean')
+  }
+  if (raw.allowedSessionIds !== undefined && !Array.isArray(raw.allowedSessionIds)) {
+    throw new LifeValidationError('wakeDelivery.allowedSessionIds must be an array')
+  }
+  const allowedSessionIds = []
+  for (const entry of raw.allowedSessionIds ?? []) {
+    const value = requireString(entry, 'wakeDelivery.allowedSessionIds[]', 200)
+    if (!isDshSessionScope(`${SCOPE_PREFIX}${value}`)) {
+      throw new LifeValidationError('wakeDelivery.allowedSessionIds entries must be DSH session ids')
+    }
+    if (!allowedSessionIds.includes(value)) allowedSessionIds.push(value)
+  }
+  if (allowedSessionIds.length > 100) {
+    throw new LifeValidationError('wakeDelivery.allowedSessionIds accepts at most 100 entries')
+  }
+  const intervalMs =
+    raw.intervalMs === undefined
+      ? DEFAULT_WAKE_INTERVAL_MS
+      : assertInteger(raw.intervalMs, 'wakeDelivery.intervalMs', { min: 1000, max: 600_000 })
+  const maxPerDrive =
+    raw.maxPerDrive === undefined
+      ? 1
+      : assertInteger(raw.maxPerDrive, 'wakeDelivery.maxPerDrive', { min: 1, max: 5 })
+  return { enabled: raw.enabled === true, allowedSessionIds, intervalMs, maxPerDrive }
+}
+
+/**
+ * Read an optional Host service without turning absence into a plugin failure.
+ * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
+ * @param {string} name - service name.
+ * @returns {Record<string, unknown> | undefined} service or undefined.
+ */
+function optionalService(ctx, name) {
+  try {
+    if (typeof ctx.get === 'function') return ctx.get(name) ?? undefined
+    return ctx[name] ?? undefined
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * Resolve the default durable data path. The isolated Desktop sets DSH_HOME;
@@ -145,6 +204,7 @@ function failClosedLife(health, error) {
     markWakeUncertain: fail,
     getWake: fail,
     listWakes: fail,
+    driveDueWakesOnce: fail,
     close: () => {},
   }
 }
@@ -211,6 +271,7 @@ export function apply(ctx, config = {}) {
   if (config.clock !== undefined && typeof config.clock !== 'function') {
     throw new LifeValidationError('clock must be a function when provided')
   }
+  const delivery = parseWakeDelivery(config.wakeDelivery)
 
   let core
   try {
@@ -273,6 +334,22 @@ export function apply(ctx, config = {}) {
     return
   }
 
+  const sessionController = optionalService(ctx, 'sessionController')
+  const sessions = optionalService(ctx, 'sessions')
+  const wakeHost = new WakeHost({
+    core,
+    ownerId,
+    sessionController,
+    flushSession:
+      typeof sessions?.flush === 'function' ? (session) => sessions.flush(session) : undefined,
+    enabled: delivery.enabled,
+    allowedSessionIds: delivery.allowedSessionIds,
+    intervalMs: delivery.intervalMs,
+    maxPerDrive: delivery.maxPerDrive,
+    clock: config.clock ?? (() => Date.now()),
+    logger: ctx.logger,
+  })
+
   /** @param {Record<string, unknown>[]} events - produced reconsideration events. */
   const publish = (events) => {
     for (const event of events) ctx.emit('life/reconsideration', event)
@@ -284,6 +361,7 @@ export function apply(ctx, config = {}) {
   const dispose = () => {
     if (disposed) return
     disposed = true
+    wakeHost.stop()
     if (timer !== null) {
       clearInterval(timer)
       timer = null
@@ -326,7 +404,8 @@ export function apply(ctx, config = {}) {
     markWakeUncertain: (id, options) => core.markWakeUncertain(id, options),
     getWake: (id) => core.getWake(id),
     listWakes: (options) => core.listWakes(options),
-    getHealth: () => core.getHealth(),
+    driveDueWakesOnce: () => wakeHost.driveOnce(),
+    getHealth: () => ({ ...core.getHealth(), delivery: wakeHost.health() }),
     getScopedHealth: (options) => core.getScopedHealth(options),
     close: () => dispose(),
   }
@@ -517,6 +596,15 @@ export function apply(ctx, config = {}) {
     parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
     execute: toolBody((_args, exec) => core.getScopedHealth({ scope: sessionScope(exec) })),
   })
+
+    if (delivery.enabled) {
+      wakeHost.start({
+        registerListener:
+          typeof ctx.on === 'function'
+            ? (handler) => ctx.on('session/event', handler, { global: true })
+            : undefined,
+      })
+    }
 
     if (tickIntervalMs > 0) {
       timer = setInterval(() => {

@@ -1143,20 +1143,37 @@ export class LifeCore {
    * @param {{ownerId: string}} options - trusted claimant identity.
    * @returns {Record<string, unknown> | null} claimed wake or null.
    */
-  claimNextWake({ ownerId } = {}) {
+  claimNextWake({ ownerId, targetSessionId } = {}) {
     this.#ensureOpen()
     this.#assertWritable()
     const owner = requireString(ownerId, 'ownerId', 200)
+    let target = null
+    if (targetSessionId !== undefined) {
+      target = requireString(targetSessionId, 'targetSessionId', 200)
+      if (!isDshSessionScope(`session:${target}`)) {
+        throw new LifeValidationError('targetSessionId must be a DSH session id')
+      }
+    }
     const nowMs = this.nowMs()
     const nowIso = this.iso(nowMs)
     return this.store.writeTransaction(() => {
-      const candidates = this.store.all(
-        `SELECT id FROM wake_requests
-         WHERE status = 'pending' AND next_attempt_at <= ?
-         ORDER BY next_attempt_at ASC, created_at ASC, id ASC
-         LIMIT 25`,
-        nowIso,
-      )
+      const candidates =
+        target === null
+          ? this.store.all(
+              `SELECT id FROM wake_requests
+               WHERE status = 'pending' AND next_attempt_at <= ?
+               ORDER BY next_attempt_at ASC, created_at ASC, id ASC
+               LIMIT 25`,
+              nowIso,
+            )
+          : this.store.all(
+              `SELECT id FROM wake_requests
+               WHERE status = 'pending' AND next_attempt_at <= ? AND target_session_id = ?
+               ORDER BY next_attempt_at ASC, created_at ASC, id ASC
+               LIMIT 25`,
+              nowIso,
+              target,
+            )
       for (const candidate of candidates) {
         const wake = this.store.get('SELECT * FROM wake_requests WHERE id = ?', candidate.id)
         if (wake === undefined || wake.status !== 'pending') continue
@@ -1181,6 +1198,39 @@ export class LifeCore {
         if (Number(result.changes) === 1) return this.#wakeView(String(candidate.id))
       }
       return null
+    })
+  }
+
+  /**
+   * Re-validate a claimed wake against its event/intent immediately before
+   * delivery. Invalid wakes are persisted as superseded and never delivered.
+   * @param {string} id - wake id.
+   * @param {{ownerId: string}} options - claiming owner.
+   * @returns {{valid: boolean, reason?: string}} recheck outcome.
+   */
+  recheckClaimedWake(id, { ownerId } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const owner = requireString(ownerId, 'ownerId', 200)
+    return this.store.writeTransaction(() => {
+      const row = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (row === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (row.status !== 'claimed') return { valid: false, reason: 'wake is not claimed' }
+      if (row.claim_owner !== owner) {
+        throw new LifeUnauthorizedError('wake is claimed by a different owner', { wakeId })
+      }
+      const reason = this.#wakeInvalidReason(row, this.nowMs())
+      if (reason === null) return { valid: true }
+      this.store.run(
+        `UPDATE wake_requests SET status = 'superseded', last_error = ?, updated_at = ?
+         WHERE id = ? AND status = 'claimed' AND claim_owner = ?`,
+        reason,
+        this.iso(),
+        wakeId,
+        owner,
+      )
+      return { valid: false, reason }
     })
   }
 
@@ -1373,6 +1423,28 @@ export class LifeCore {
       )
       return Number(result.changes)
     })
+  }
+
+  /**
+   * Whether an exact target Session still has a claimed, admitted, or uncertain
+   * wake awaiting reconciliation. SQL-complete (no row-limit scan) and indexed
+   * by the stored context scope.
+   * @param {string} targetSessionId - DSH session id.
+   * @returns {boolean} true when an unreconciled wake exists.
+   */
+  hasUnreconciledWakeForSession(targetSessionId) {
+    this.#ensureOpen()
+    const target = requireString(targetSessionId, 'targetSessionId', 200)
+    if (!isDshSessionScope(`session:${target}`)) {
+      throw new LifeValidationError('targetSessionId must be a DSH session id')
+    }
+    const row = this.store.get(
+      `SELECT 1 AS found FROM wake_requests
+       WHERE context_scope = ? AND status IN ('claimed', 'admitted', 'uncertain')
+       LIMIT 1`,
+      `session:${target}`,
+    )
+    return row !== undefined
   }
 
   /**

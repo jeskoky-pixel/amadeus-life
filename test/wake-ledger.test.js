@@ -119,7 +119,7 @@ test('A1 v2 store migrates to v4 preserving rows and reopens idempotently', () =
   const clock = makeClock()
   const core = openCore(databasePath, clock)
   try {
-    assert.equal(core.getHealth().schemaVersion, '5')
+    assert.equal(core.getHealth().schemaVersion, '8')
     assert.equal(core.getIntent('intent_v2_keep', { scope: DSH_SCOPE }).description, 'v2 survivor')
     assert.equal(core.getIntent('intent_v2_keep', { scope: DSH_SCOPE }).revision, 2)
     assert.equal(core.listOutbox({ scope: DSH_SCOPE }).length, 1)
@@ -132,7 +132,7 @@ test('A1 v2 store migrates to v4 preserving rows and reopens idempotently', () =
 
   const raw = new DatabaseSync(databasePath)
   try {
-    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '5')
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '8')
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wake_requests'").get())
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wake_consumption'").get())
     assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM intents").get().n, 1)
@@ -143,7 +143,7 @@ test('A1 v2 store migrates to v4 preserving rows and reopens idempotently', () =
 
   const reopened = openCore(databasePath, clock)
   try {
-    assert.equal(reopened.getHealth().schemaVersion, '5')
+    assert.equal(reopened.getHealth().schemaVersion, '8')
     assert.equal(reopened.getIntent('intent_v2_keep', { scope: DSH_SCOPE }).revision, 2)
     assert.equal(reopened.listOutbox({ scope: DSH_SCOPE }).length, 1)
   } finally {
@@ -204,10 +204,10 @@ test('A4 concurrent openers migrate a healthy v2 store exactly once', async () =
     ),
   )
   await Promise.all(workers.map((worker) => worker.terminate()))
-  assert.deepEqual(versions.slice().sort(), ['5', '5'])
+  assert.deepEqual(versions.slice().sort(), ['8', '8'])
   const raw = new DatabaseSync(databasePath)
   try {
-    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '5')
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '8')
     assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM intents').get().n, 1)
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wake_requests'").get())
   } finally {
@@ -460,7 +460,7 @@ test('C5 health counts wakes globally and by scope without leaking', () => {
     createDueIntent(core, clock)
     core.prepareDueWakes({ limit: 10 })
     const health = core.getHealth()
-    assert.equal(health.schemaVersion, '5')
+    assert.equal(health.schemaVersion, '8')
     assert.equal(health.counts.wakes.pending, 1)
     assert.equal(core.getScopedHealth({ scope: DSH_SCOPE }).counts.wakes.pending, 1)
     assert.equal(core.getScopedHealth({ scope: 'session:other' }).counts.wakes.pending, 0)

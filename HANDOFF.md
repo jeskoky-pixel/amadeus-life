@@ -1,5 +1,25 @@
 # amadeus-life 交接
 
+## 最新检查点：Life v1.0 预算边界 / SQLite v8（2026-10-25）
+
+- 同一 Creator 会话补齐统一预算中的活动并发与付费预留：`budget_scopes.activity_limit` 在活动 INSERT 的同一 `BEGIN IMMEDIATE` 内检查 Session/Persona/global 有效上限；pending/running/paused/stopping/unknown 占名额，终态释放；模型工具与 trusted Host 共用检查，无 resource 不能绕过。
+- 新增受信任 `reserveCost/settleCost/releaseCost/getCostReservation`：按 scope/cost_limit 原子预留，幂等键、未知保持占用、负数/重复结算拒绝；没有真实支付 Provider，模型不可调用。
+- schema v8：v2–v7 增量迁移，新增 `cost_reservations`、`budget_scopes.activity_limit/cost_reserved`；失败回滚测试覆盖 v7→v8。确定性测试 137 项通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 24、life-v1 15、v1-budget 4）。v7→v8 真实开发库冷备份、完整性与历史表逐列摘要核验已通过；真实付费和平台仍未验收。
+
+## 最新检查点：Life v1.0 最终闭环 / SQLite v7（2026-10-25）
+
+- 同一 Creator 会话在现有工作树补齐实际调用路径：默认关闭、管理员启用后可用的 `life_activity_start/status/pause/resume/cancel/finish` 模型工具（身份/owner scope/Provider 由 Session binding 派生，完成/失败证据只由 Provider 返回）；`life_shared_read` 共享只读视图；`resource_lease` SQLite 部分唯一索引互斥；真实用户消息触发长活动 pause/checkpoint 或 unknown；官方 `assistant/message.usage` 按 Session+seq 幂等归账。
+- schema 升到 v7：v2–v6 增量迁移，新增 `usage_events` 与资源租约唯一索引；身份/idle/预算/Provider 数据保留。新自主功能默认关闭，原九个工具默认不变。
+- 确定性测试 131 项通过：quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 22、life-v1 15。新增 E12/E13/E14 覆盖意图关联校验、撤权期间 pending Provider start、迟到完成结果不复活；十场景映射与未验证清单见 `docs/verification/V1_TEN_SCENARIOS.md`。
+- 尚未提交/推送；真实隔离 DSH 的 v6→v7 迁移、无用户输入 idle、模型实际选择活动工具、真实用量字段和启停/恢复仍需 Codex 验收。`node --test` 在本沙箱仍有 runner `spawn EPERM`。
+
+## 最新检查点：Life v1.0 能力实现 / SQLite v6（2026-10-25）
+
+- 同一 Creator 会话在现有 `codex/life-core` 工作树完成 v1.0 能力实现：统一身份（Persona/Scene/Session/Principal/Data Scope、显式共享与撤销失效）、idle 心跳（持久安静窗口/频率/预算/Host 共用 wake 机制）、统一自主预算、Activity Provider 契约与受控 `LocalVirtualProvider`、v5→v6 增量迁移。
+- 未新增模型工具（仍 9 个），身份/Provider/预算/idle 只作为 trusted Host service；没有真实平台外发、第二 Agent/模型循环或生产改动。
+- 确定性测试 121 项通过：quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 21、life-v1 6。v6 迁移、身份隔离/撤销、idle 投递、预算耗尽延迟、Provider 生命周期/崩溃均有测试；尚未提交/推送。
+- 下一段由 Codex 独立审查，并在真实隔离 DSH 做冷备份后的 v5→v6 迁移、无用户输入 idle、启停/恢复和十场景验收。当前 README 的 120 项为本地结果；`node --test` 在本沙箱仍有 runner `spawn EPERM`。
+
 ## 最新检查点：SQLite v5 Host 消费接线（2026-10-25）
 
 - Codex 先提交失败回归 `4f690c1`，原 cordis Creator 第 18/19 轮主要实现实时可信 Session 消费/turn-end 接线、pre-admission 持久 message ID、官方 `projections/page` 历史对账、schema v5 安全迁移及 ADR 0005。Codex 独立标准测试 113/113，`npm test` 六组 18/20/9/19/28/19 全通过，`git diff --check` 通过。

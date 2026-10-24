@@ -26,6 +26,9 @@ const EVIDENCE_EVENT_LIMIT = 800
  * @returns {string} prompt text.
  */
 export function wakePrompt(wake) {
+  if (wake.origin === 'idle') {
+    return `Life idle opportunity ${String(wake.id)}: no task is required. You may rest or stay silent; re-read current Life state if you decide to act. Do not send external messages from this wake.`
+  }
   return `Life wake ${String(wake.id)}: intent ${String(wake.intentId)} revision ${String(wake.intentRevision)}. Re-read the current Life state before deciding anything; do not send external messages from this wake.`
 }
 
@@ -65,6 +68,8 @@ export class WakeHost {
     allowedSessionIds,
     intervalMs,
     maxPerDrive,
+    idle = null,
+    budget = null,
     clock = () => Date.now(),
     logger,
     setIntervalFn = setInterval,
@@ -79,6 +84,13 @@ export class WakeHost {
     this.allowedSet = new Set(this.allowed)
     this.intervalMs = intervalMs
     this.maxPerDrive = maxPerDrive
+    this.idle = idle !== null && typeof idle === 'object' ? { enabled: idle.enabled === true, ...idle } : { enabled: false }
+    this.budget = budget !== null && typeof budget === 'object' ? { ...budget } : { enabled: false }
+    this.lastIdle = null
+    this.lastBudgetError = null
+    this.lastUsage = null
+    this.autonomousTurns = new Set()
+    this.userYieldPromises = []
     this.clock = clock
     this.logger = logger
     this.setIntervalFn = setIntervalFn
@@ -148,6 +160,17 @@ export class WakeHost {
       inFlight: this.running,
       reconciliation: this.reconcileState,
       unresolvedWakes: hasUnresolved,
+      idle: {
+        enabled: this.idle.enabled === true,
+        targetSessionId: this.idle.targetSessionId ?? null,
+        lastReason: this.lastIdle?.reason ?? null,
+        lastCreatedAt: this.lastIdle?.at ?? null,
+      },
+      budget: {
+        enabled: this.budget.enabled === true,
+        lastError: this.lastBudgetError ?? null,
+      },
+      usage: this.lastUsage === null ? { status: 'none' } : this.lastUsage,
       lastReconcileError: this.lastReconcileError ?? undefined,
       missing: this.missing.length > 0 ? [...this.missing] : undefined,
       lastError: this.lastError ?? undefined,
@@ -276,6 +299,7 @@ export class WakeHost {
     const delivered = []
     try {
       await this.reconcileUnreconciledWakes()
+      this.#maybeAllocateIdleWake()
       this.core.tick()
       this.core.prepareDueWakes({
         limit: Math.min(100, Math.max(10, this.maxPerDrive * Math.max(1, this.allowed.length) * 2)),
@@ -289,6 +313,23 @@ export class WakeHost {
         const wake = this.core.claimNextWake({ ownerId: this.ownerId, targetSessionId: sessionId })
         if (wake === null) continue
         claimed += 1
+        const budget = this.core.consumeWakeBudget({
+          scope: wake.contextScope,
+          estimatedTokens: Number(this.budget.estimatedTokens ?? 0) || 0,
+        })
+        if (budget.allowed !== true || (this.budget.enabled === true && budget.unconfigured === true)) {
+          this.lastBudgetError = `budget deferred: ${String(budget.unconfigured === true ? 'unconfigured' : budget.reason ?? 'unknown')}`
+          try {
+            this.core.releaseWakeClaim(wake.id, {
+              ownerId: this.ownerId,
+              reason: this.lastBudgetError,
+            })
+          } catch {
+            // The wake remains conservatively claimed/uncertain; never resend.
+          }
+          continue
+        }
+        this.lastBudgetError = null
         const outcome = await this.deliver(wake, bindingGeneration)
         if (outcome !== null && outcome.status !== 'superseded') delivered.push(outcome)
         if (!this.#isCurrentBinding(bindingGeneration)) break
@@ -301,6 +342,49 @@ export class WakeHost {
     } finally {
       this.running = false
     }
+  }
+
+  /**
+   * Cheap idle eligibility: one persisted opportunity per window, no model call
+   * until an idle wake is actually claimed/delivered. Quiet hours and current
+   * turn presence are checked before any DB write.
+   */
+  #maybeAllocateIdleWake() {
+    if (this.idle.enabled !== true || this.disposed || !this.bound) return
+    const sessionId = this.idle.targetSessionId
+    if (typeof sessionId !== 'string' || !this.allowedSet.has(sessionId)) return
+    const nowMs = this.clock()
+    if (this.currentTurn.has(sessionId)) {
+      this.lastIdle = { created: false, reason: 'session_turn_active', at: this.core.iso(nowMs) }
+      return
+    }
+    if (this.#inQuietHours(nowMs)) {
+      this.lastIdle = { created: false, reason: 'quiet_hours', at: this.core.iso(nowMs) }
+      return
+    }
+    try {
+      const result = this.core.allocateIdleWake({
+        targetSessionId: sessionId,
+        windowMs: Number(this.idle.windowMs),
+        quietAfterActivityMs: Number(this.idle.quietAfterActivityMs ?? 0),
+        now: this.core.iso(nowMs),
+      })
+      this.lastIdle = { ...result, at: this.core.iso(nowMs) }
+    } catch (error) {
+      this.lastIdle = { created: false, reason: `idle_error:${messageOf(error)}`, at: this.core.iso(nowMs) }
+    }
+  }
+
+  /**
+   * @param {number} nowMs - epoch ms.
+   * @returns {boolean} whether current UTC hour is inside configured quiet hours.
+   */
+  #inQuietHours(nowMs) {
+    const start = this.idle.quietStartHour
+    const end = this.idle.quietEndHour
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start === end) return false
+    const hour = new Date(nowMs).getUTCHours()
+    return start < end ? hour >= start && hour < end : hour >= start || hour < end
   }
 
   /**
@@ -431,6 +515,47 @@ export class WakeHost {
     if (sessionId === undefined || typeof event.type !== 'string') return
     if (!this.allowedSet.has(sessionId)) return
     try {
+      this.core.noteSessionActivity({ targetSessionId: sessionId, at: this.core.iso() })
+    } catch {
+      // Idle bookkeeping must never break event observation.
+    }
+    if (event.type === 'user/message' && event.data?.source?.kind !== WAKE_SOURCE_KIND) {
+      // Real user turn wins over same-Session long activities. The Provider is
+      // paused/checkpointed when supported; otherwise the activity stays
+      // conservative unknown. Never cancel or resend.
+      const promise = this.core.v1
+        .yieldActivitiesToUser({ targetSessionId: sessionId })
+        .catch(() => [])
+      this.userYieldPromises.push(promise)
+      while (this.userYieldPromises.length > 20) this.userYieldPromises.shift()
+    }
+    if (event.type === 'assistant/message') {
+      const turn = Number(event.data?.turn)
+      const key = `${sessionId}:${turn}`
+      if (this.autonomousTurns.has(key)) {
+        const usage = event.data?.usage
+        if (usage !== null && typeof usage === 'object') {
+          try {
+            this.lastUsage = {
+              status: 'recorded',
+              at: this.core.iso(),
+              seq: Number(event.seq),
+              ...this.core.v1.recordSessionUsage({
+                targetSessionId: sessionId,
+                seq: Number(event.seq),
+                usage,
+              }),
+            }
+          } catch (error) {
+            this.lastUsage = { status: 'error', at: this.core.iso(), seq: Number(event.seq), error: messageOf(error) }
+          }
+        } else {
+          this.lastUsage = { status: 'usage_unknown', at: this.core.iso(), seq: Number(event.seq) }
+        }
+      }
+      return
+    }
+    try {
       if (event.type === 'turn/start') {
         this.currentTurn.set(sessionId, Number(event.data?.turn))
         return
@@ -454,6 +579,9 @@ export class WakeHost {
         if (watched !== undefined && (watched.sessionId !== sessionId || watched.wakeId !== wakeId)) return
         const turn = this.currentTurn.get(sessionId) ?? null
         const userSeq = Number(event.seq)
+        if (turn !== null && Number.isInteger(turn)) {
+          this.autonomousTurns.add(`${sessionId}:${turn}`)
+        }
         // Fix validity at the real event time, before any same-turn cancellation.
         if (turn !== null && Number.isInteger(userSeq) && userSeq >= 1) {
           try {
@@ -493,6 +621,7 @@ export class WakeHost {
           entry.turnReason = String(reason)
         }
         if (this.currentTurn.get(sessionId) === turn) this.currentTurn.delete(sessionId)
+        this.autonomousTurns.delete(`${sessionId}:${turn}`)
       }
     } catch {
       // Event observation must never break the Host.

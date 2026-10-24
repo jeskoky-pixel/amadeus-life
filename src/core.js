@@ -10,6 +10,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { LifeStore } from './store.js'
+import { LifeV1 } from './life-v1.js'
 import {
   ACTIVITY_STATUSES,
   INTENT_STATUSES,
@@ -73,6 +74,12 @@ function activityView(row) {
     intentId: row.intent_id,
     ownerScope: row.owner_scope,
     evidenceRefs: JSON.parse(String(row.evidence_json)),
+    personaId: row.persona_id ?? null,
+    sceneId: row.scene_id ?? null,
+    priority: Number(row.priority ?? 0),
+    checkpointRef: row.checkpoint_ref ?? null,
+    resourceLease: row.resource_lease ?? null,
+    deadlineAt: row.deadline_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -104,6 +111,10 @@ function wakeView(row) {
     executedTurnSeq: row.executed_turn_seq,
     preparedMessageId: row.prepared_message_id,
     preparedAt: row.prepared_at,
+    origin: row.origin ?? 'intent',
+    idleKey: row.idle_key ?? null,
+    personaId: row.persona_id ?? null,
+    sceneId: row.scene_id ?? null,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -205,6 +216,8 @@ export class LifeCore {
     this.externalAuthorizer = externalAuthorizer
     this.databasePath = databasePath
     this.store = LifeStore.open(databasePath)
+    this.v1 = new LifeV1(this)
+    this.v1.setClock(clock)
     this.startedAt = this.iso()
     /** @type {string | null} */
     this.lastTickAt = null
@@ -1283,8 +1296,10 @@ export class LifeCore {
       if (row.claim_owner !== owner) {
         throw new LifeUnauthorizedError('wake is claimed by a different owner', { wakeId })
       }
-      const event = this.store.get('SELECT status FROM intent_events WHERE id = ?', row.event_id)
-      if (event === undefined || event.status !== 'pending') {
+      const event = row.origin === 'idle'
+        ? null
+        : this.store.get('SELECT status FROM intent_events WHERE id = ?', row.event_id)
+      if (row.origin !== 'idle' && (event === undefined || event.status !== 'pending')) {
         // Local acknowledgement won the race with admission: persist the
         // supersession, then fail outside the transaction.
         this.store.run(
@@ -1812,6 +1827,62 @@ export class LifeCore {
   }
 
   /**
+   * Trusted idle/budget helpers exposed for the Host adapter.
+   * @param {Record<string, unknown>} options - idle allocation input.
+   * @returns {{created: boolean, reason?: string, wake?: Record<string, unknown>}} result.
+   */
+  allocateIdleWake(options) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    return this.v1.allocateIdleWake(options)
+  }
+
+  /** @param {Record<string, unknown>} options - budget reservation. */
+  consumeWakeBudget(options) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    return this.v1.consumeWakeBudget(options)
+  }
+
+  /** @param {{targetSessionId: string, at?: string}} options - activity mark. */
+  noteSessionActivity(options) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    return this.v1.noteSessionActivity(options)
+  }
+
+  /**
+   * Release a claim without delivery (for example budget deferral). This never
+   * resends immediately: the wake returns to pending and waits for a new drive.
+   * @param {string} id - wake id.
+   * @param {{ownerId: string, reason?: string}} options - claim owner.
+   * @returns {Record<string, unknown>} wake view.
+   */
+  releaseWakeClaim(id, { ownerId, reason } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const owner = requireString(ownerId, 'ownerId', 200)
+    return this.store.writeTransaction(() => {
+      const wake = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (wake === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (wake.status !== 'claimed' || wake.claim_owner !== owner) {
+        throw new LifeInvalidTransitionError('wake is not claimed by this owner', { wakeId })
+      }
+      const now = this.iso()
+      this.store.run(
+        `UPDATE wake_requests SET status = 'pending', claim_owner = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status = 'claimed' AND claim_owner = ?`,
+        reason === undefined ? 'claim released' : String(reason).slice(0, 500),
+        now,
+        wakeId,
+        owner,
+      )
+      return this.#wakeView(wakeId)
+    })
+  }
+
+  /**
    * Read one wake (trusted read for validation tooling; no model tool).
    * @param {string} id - wake id.
    * @returns {Record<string, unknown>} wake view.
@@ -1873,6 +1944,7 @@ export class LifeCore {
    * @returns {string | null} invalidation reason or null.
    */
   #wakeConsumptionValidity(wake, nowMs) {
+    if (wake.origin === 'idle') return this.v1.idleWakeInvalidReason(wake, nowMs)
     const event = this.store.get('SELECT id, type, status FROM intent_events WHERE id = ?', wake.event_id)
     if (event === undefined) return 'event missing'
     if (event.type !== 'reconsideration') return 'event kind mismatch'
@@ -1897,6 +1969,7 @@ export class LifeCore {
    * @returns {string | null} invalidation reason, or null when deliverable.
    */
   #wakeInvalidReason(wake, nowMs) {
+    if (wake.origin === 'idle') return this.v1.idleWakeInvalidReason(wake, nowMs)
     const event = this.store.get(
       'SELECT id, type, status, intent_id, intent_revision FROM intent_events WHERE id = ?',
       wake.event_id,

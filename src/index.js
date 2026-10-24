@@ -37,7 +37,16 @@ export const inject = ['tools']
 
 const SCOPE_PREFIX = 'session:'
 const UNCONSTRAINED_OBJECT = Object.freeze({ type: 'object', additionalProperties: true })
-const RESERVED_ARGS = new Set(['scope', 'trustedEvidence', 'authorizationRef', 'ownerScope', 'contextScope'])
+const RESERVED_ARGS = new Set([
+  'scope',
+  'trustedEvidence',
+  'authorizationRef',
+  'ownerScope',
+  'contextScope',
+  'personaId',
+  'sceneId',
+  'principalId',
+])
 const DEFAULT_WAKE_INTERVAL_MS = 60_000
 
 /**
@@ -79,6 +88,67 @@ function parseWakeDelivery(raw) {
       ? 1
       : assertInteger(raw.maxPerDrive, 'wakeDelivery.maxPerDrive', { min: 1, max: 5 })
   return { enabled: raw.enabled === true, allowedSessionIds, intervalMs, maxPerDrive }
+}
+
+function parseIdle(raw, allowedSessionIds) {
+  if (raw === undefined) return { enabled: false }
+  if (typeof raw !== 'object' || raw === null) throw new LifeValidationError('idle must be an object')
+  if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') {
+    throw new LifeValidationError('idle.enabled must be a boolean')
+  }
+  const enabled = raw.enabled === true
+  if (!enabled) return { enabled: false }
+  const targetSessionId = requireString(raw.targetSessionId, 'idle.targetSessionId', 200)
+  if (!allowedSessionIds.includes(targetSessionId)) {
+    throw new LifeValidationError('idle.targetSessionId must be in wakeDelivery.allowedSessionIds')
+  }
+  const windowMs = raw.windowMs === undefined
+    ? 30 * 60_000
+    : assertInteger(raw.windowMs, 'idle.windowMs', { min: 1000, max: 86_400_000 })
+  const quietAfterActivityMs = raw.quietAfterActivityMs === undefined
+    ? 5 * 60_000
+    : assertInteger(raw.quietAfterActivityMs, 'idle.quietAfterActivityMs', { min: 0, max: 86_400_000 })
+  const quietStartHour = raw.quietStartHour === undefined
+    ? undefined
+    : assertInteger(raw.quietStartHour, 'idle.quietStartHour', { min: 0, max: 23 })
+  const quietEndHour = raw.quietEndHour === undefined
+    ? undefined
+    : assertInteger(raw.quietEndHour, 'idle.quietEndHour', { min: 0, max: 23 })
+  return { enabled: true, targetSessionId, windowMs, quietAfterActivityMs, quietStartHour, quietEndHour }
+}
+
+function parseFeature(raw, name) {
+  if (raw === undefined) return { enabled: false }
+  if (typeof raw !== 'object' || raw === null) throw new LifeValidationError(`${name} must be an object`)
+  if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') {
+    throw new LifeValidationError(`${name}.enabled must be a boolean`)
+  }
+  return { enabled: raw.enabled === true }
+}
+
+function parseWakeBudget(raw) {
+  if (raw === undefined) return { enabled: false, estimatedTokens: 0 }
+  if (typeof raw !== 'object' || raw === null) throw new LifeValidationError('wakeBudget must be an object')
+  const enabled = raw.enabled === true
+  const windowMs = raw.windowMs === undefined
+    ? 86_400_000
+    : assertInteger(raw.windowMs, 'wakeBudget.windowMs', { min: 1000, max: 86_400_000 * 30 })
+  const wakeLimit = raw.wakeLimit === undefined
+    ? 100
+    : assertInteger(raw.wakeLimit, 'wakeBudget.wakeLimit', { min: 0 })
+  const tokenLimit = raw.tokenLimit === undefined
+    ? null
+    : assertInteger(raw.tokenLimit, 'wakeBudget.tokenLimit', { min: 0 })
+  const costLimit = raw.costLimit === undefined
+    ? null
+    : assertInteger(raw.costLimit, 'wakeBudget.costLimit', { min: 0 })
+  const estimatedTokens = raw.estimatedTokens === undefined
+    ? 0
+    : assertInteger(raw.estimatedTokens, 'wakeBudget.estimatedTokens', { min: 0 })
+  const activityLimit = raw.activityLimit === undefined
+    ? null
+    : assertInteger(raw.activityLimit, 'wakeBudget.activityLimit', { min: 0 })
+  return { enabled, windowMs, wakeLimit, tokenLimit, costLimit, activityLimit, estimatedTokens }
 }
 
 /**
@@ -210,6 +280,38 @@ function failClosedLife(health, error) {
     recordWakeTurnEnd: fail,
     getWakeConsumption: fail,
     listUnreconciledWakesForSession: fail,
+    noteSessionActivity: fail,
+    allocateIdleWake: fail,
+    consumeWakeBudget: fail,
+    getBudget: fail,
+    configureBudget: fail,
+    recordTokenUsage: fail,
+    reserveCost: fail,
+    settleCost: fail,
+    releaseCost: fail,
+    getCostReservation: fail,
+    createPersona: fail,
+    getPersona: fail,
+    createScene: fail,
+    getScene: fail,
+    grantSceneShare: fail,
+    sceneVisibleTo: fail,
+    bindSession: fail,
+    getSessionBinding: fail,
+    revokeSessionBinding: fail,
+    registerActivityProvider: fail,
+    listActivityProviders: fail,
+    startActivity: fail,
+    pauseActivity: fail,
+    resumeActivity: fail,
+    checkpointActivity: fail,
+    cancelActivity: fail,
+    reconcileActivity: fail,
+    finishActivity: fail,
+    getActivityStatus: fail,
+    yieldActivitiesToUser: fail,
+    getSharedLifeView: fail,
+    recordSessionUsage: fail,
     driveDueWakesOnce: fail,
     close: () => {},
   }
@@ -278,6 +380,10 @@ export function apply(ctx, config = {}) {
     throw new LifeValidationError('clock must be a function when provided')
   }
   const delivery = parseWakeDelivery(config.wakeDelivery)
+  const idleConfig = parseIdle(config.idle, delivery.allowedSessionIds)
+  const budgetConfig = parseWakeBudget(config.wakeBudget)
+  const activityTools = parseFeature(config.activityTools, 'activityTools')
+  const sharedRead = parseFeature(config.sharedRead, 'sharedRead')
 
   let core
   try {
@@ -323,6 +429,18 @@ export function apply(ctx, config = {}) {
   try {
     core.markInterruptedAsUnknown()
     core.markInterruptedWakesUncertain()
+    if (budgetConfig.enabled || budgetConfig.activityLimit != null) {
+      for (const sessionId of delivery.allowedSessionIds) {
+        core.v1.configureBudget({
+          scope: `${SCOPE_PREFIX}${sessionId}`,
+          windowMs: budgetConfig.windowMs,
+          wakeLimit: budgetConfig.enabled ? budgetConfig.wakeLimit : null,
+          tokenLimit: budgetConfig.enabled ? budgetConfig.tokenLimit : null,
+          costLimit: budgetConfig.enabled ? budgetConfig.costLimit : null,
+          activityLimit: budgetConfig.activityLimit,
+        })
+      }
+    }
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error))
     try {
@@ -347,6 +465,8 @@ export function apply(ctx, config = {}) {
     allowedSessionIds: delivery.allowedSessionIds,
     intervalMs: delivery.intervalMs,
     maxPerDrive: delivery.maxPerDrive,
+    idle: idleConfig,
+    budget: budgetConfig,
     clock: config.clock ?? (() => Date.now()),
     logger: ctx.logger,
   })
@@ -478,6 +598,38 @@ export function apply(ctx, config = {}) {
     recordWakeTurnEnd: (id, coordinates) => core.recordWakeTurnEnd(id, coordinates),
     getWakeConsumption: (id) => core.getWakeConsumption(id),
     listUnreconciledWakesForSession: (target, options) => core.listUnreconciledWakesForSession(target, options),
+    noteSessionActivity: (options) => core.noteSessionActivity(options),
+    allocateIdleWake: (options) => core.allocateIdleWake(options),
+    consumeWakeBudget: (options) => core.consumeWakeBudget(options),
+    getBudget: (scope) => core.v1.getBudget(scope),
+    configureBudget: (options) => core.v1.configureBudget(options),
+    recordTokenUsage: (options) => core.v1.recordTokenUsage(options),
+    reserveCost: (options) => core.v1.reserveCost(options),
+    settleCost: (options) => core.v1.settleCost(options),
+    releaseCost: (options) => core.v1.releaseCost(options),
+    getCostReservation: (id) => core.v1.getCostReservation(id),
+    createPersona: (input) => core.v1.createPersona(input),
+    getPersona: (id) => core.v1.getPersona(id),
+    createScene: (input) => core.v1.createScene(input),
+    getScene: (id) => core.v1.getScene(id),
+    grantSceneShare: (input) => core.v1.grantSceneShare(input),
+    sceneVisibleTo: (input) => core.v1.sceneVisibleTo(input),
+    bindSession: (input) => core.v1.bindSession(input),
+    getSessionBinding: (target) => core.v1.getSessionBinding(target),
+    revokeSessionBinding: (input) => core.v1.revokeSessionBinding(input),
+    registerActivityProvider: (provider) => core.v1.registerActivityProvider(provider),
+    listActivityProviders: () => core.v1.listActivityProviders(),
+    startActivity: (input) => core.v1.startActivity(input),
+    pauseActivity: (activityId, scope) => core.v1.operateActivity('pause', activityId, scope),
+    resumeActivity: (activityId, scope) => core.v1.operateActivity('resume', activityId, scope),
+    checkpointActivity: (activityId, scope) => core.v1.operateActivity('checkpoint', activityId, scope),
+    cancelActivity: (activityId, scope) => core.v1.operateActivity('cancel', activityId, scope),
+    reconcileActivity: (activityId, scope) => core.v1.operateActivity('reconcile', activityId, scope),
+    finishActivity: (activityId, scope, outcome) => core.v1.finishActivity(activityId, scope, outcome),
+    getActivityStatus: (activityId, scope) => core.v1.getActivityStatus(activityId, scope),
+    yieldActivitiesToUser: (options) => core.v1.yieldActivitiesToUser(options),
+    getSharedLifeView: (options) => core.v1.getSharedLifeView(options),
+    recordSessionUsage: (options) => core.v1.recordSessionUsage(options),
     driveDueWakesOnce: () => wakeHost.driveOnce(),
     getHealth: () => ({ ...core.getHealth(), delivery: wakeHost.health() }),
     getScopedHealth: (options) => core.getScopedHealth(options),
@@ -663,6 +815,118 @@ export function apply(ctx, config = {}) {
       }),
     ),
   })
+
+  const boundIdentity = (exec) => {
+    const scope = sessionScope(exec)
+    const target = scope.slice(SCOPE_PREFIX.length)
+    const binding = core.v1.getSessionBinding(target)
+    if (binding.active !== true) {
+      throw new LifeUnauthorizedError('an active Session binding is required for this Life tool')
+    }
+    return { scope, target, binding }
+  }
+
+  if (activityTools.enabled) {
+    registerTool(ctx, {
+      name: 'life_activity_start',
+      description:
+        'Start a controlled local virtual activity for this Session. Owner scope, Persona, Scene, principal, and authorization are derived from the active Session binding; the model cannot select a provider or identity. Completion evidence only comes from the Provider.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          description: { type: 'string', description: 'Purpose of the activity.' },
+          intentId: { type: 'string', description: 'Optional related intent id.' },
+          priority: { type: 'integer', minimum: 0, maximum: 100, description: 'Optional activity priority.' },
+          resource: { type: 'string', description: 'Optional resource key to acquire exclusively.' },
+          deadlineAt: { type: 'string', description: 'Optional ISO-8601 deadline.' },
+        },
+        required: ['description'],
+      },
+      execute: toolBody(async (args, exec) => {
+        const { scope, binding } = boundIdentity(exec)
+        return core.v1.startActivity({
+          description: args.description,
+          ownerScope: scope,
+          providerId: 'local-virtual',
+          intentId: args.intentId,
+          priority: args.priority ?? 0,
+          personaId: binding.personaId,
+          sceneId: binding.sceneId,
+          resourceLease: args.resource,
+          deadlineAt: args.deadlineAt,
+        })
+      }),
+    })
+
+    registerTool(ctx, {
+      name: 'life_activity_status',
+      description: 'Read a bound activity and the local Provider status; does not transition or complete it.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { id: { type: 'string', description: 'Activity id.' } },
+        required: ['id'],
+      },
+      execute: toolBody(async (args, exec) => {
+        const { scope } = boundIdentity(exec)
+        return core.v1.getActivityStatus(args.id, scope)
+      }),
+    })
+
+    for (const [name, action, label] of [
+      ['life_activity_pause', 'pause', 'Pause a running bound activity through the local Provider.'],
+      ['life_activity_resume', 'resume', 'Resume a paused bound activity through the local Provider.'],
+      ['life_activity_cancel', 'cancel', 'Request cancellation of a bound activity through the local Provider.'],
+    ]) {
+      registerTool(ctx, {
+        name,
+        description: label,
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { id: { type: 'string', description: 'Activity id.' } },
+          required: ['id'],
+        },
+        execute: toolBody(async (args, exec) => {
+          const { scope } = boundIdentity(exec)
+          return core.v1.operateActivity(action, args.id, scope)
+        }),
+      })
+    }
+
+    registerTool(ctx, {
+      name: 'life_activity_finish',
+      description:
+        'Ask the local Provider to finish a bound activity as completed or failed. The model cannot supply evidence refs; only Provider evidence is recorded.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string', description: 'Activity id.' },
+          outcome: { type: 'string', enum: ['completed', 'failed'], description: 'Provider outcome to request.' },
+        },
+        required: ['id', 'outcome'],
+      },
+      execute: toolBody(async (args, exec) => {
+        const { scope } = boundIdentity(exec)
+        return core.v1.finishActivity(args.id, scope, args.outcome)
+      }),
+    })
+  }
+
+  if (sharedRead.enabled) {
+    registerTool(ctx, {
+      name: 'life_shared_read',
+      description:
+        'Read the minimal shared life view visible to this Session binding. Scenes are selected by the stored binding and explicit grants only; private descriptions and authorization/principal references are never returned.',
+      parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+      execute: toolBody((_args, exec) => {
+        const { target } = boundIdentity(exec)
+        return core.v1.getSharedLifeView({ targetSessionId: target })
+      }),
+    })
+  }
 
   registerTool(ctx, {
     name: 'life_health',

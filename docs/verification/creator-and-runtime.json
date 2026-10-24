@@ -5,7 +5,7 @@
   "runtime": "independent official Desktop; not headless",
   "workspace": {
     "id": "cde4653e-bea0-4285-b098-059003a3714c",
-    "path": "C:\\Users\\Jesko\\Documents\\ChatGPT\\Amadeus\\private\\life-development\\workspace\\amadeus-life",
+    "path": "${AMADEUS_ROOT}\\private\\life-development\\workspace\\amadeus-life",
     "title": "Amadeus Life Development"
   },
   "sessionId": "session-fa594d5f-9c84-4e51-aca1-f8ba8a3ee621",

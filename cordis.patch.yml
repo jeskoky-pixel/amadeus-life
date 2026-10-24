@@ -1,0 +1,6 @@
+# Amadeus Life bundle patch.
+# Installed by `plugin_manager install_bundle`; do not merge this row into a
+# runtime profile by hand.
+- insert:
+    - id: amadeus-life
+      name: '@amadeus/life'

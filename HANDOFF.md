@@ -1,49 +1,42 @@
 # amadeus-life 交接
 
-更新日期：2026-10-25（Asia/Shanghai）。
+日期：2026-10-25。状态：0.1.0 开发版核心已验收；尚未发布 release、npm 包或部署生产。
 
-## M0 最新入口
+## 当前能做什么
 
-见 docs/M0.md 与 docs/contracts/qq-life-v0.1.md。已形成旁路事件、独立观察游标、意图版本、唤醒排队和活动取消草案。主仓库与 QQ 仓库保存同字节副本；当前没有 Life 运行时实现或集成验收。
+SQLite schema v2 保存意图与活动；支持 revision CAS、改期/取消、有界时钟 tick、持久复查 outbox、scope 隔离、可信证据边界、单运行时 lease、明确存储错误与生命周期清理。
 
-QQ 的水位、发送和回执所有权不交给 Life；Life 关闭不能阻断正常连续聊天。下一步先补独立 NapCat 环境与基础身份/权限条件，再按该契约设计正反例。
+9 个模型工具已在真实 DSH 注册并调用。没有 QQ、Memory、State 或其他身体也能运行。到期只产生本地引用事件，不自动调用模型、唤醒会话或发送消息。
 
-## 仓库
+## 实际开发与验证
 
-- 远端：https://github.com/jeskoky-pixel/amadeus-life
-- 默认分支：main
-- 可见性：公开（2026-10-25 用户明确要求）
-- 开发顺序：P0
-- 本地位置：主项目目录下 plugins/amadeus-life/，属于独立 Git 仓库。
+- 独立官方 DSH Desktop 0.2.1-rc.3，Workspace 为 Amadeus Life Development。
+- Creator 确实为 cordis，模型 deepseek-official / deepseek-flash，High；官方 1017 标签匹配已核实。
+- 会话 session-fa594d5f-9c84-4e51-aca1-f8ba8a3ee621；主要实现与两轮具体修复均复用此会话，无子 Agent。
+- Codex 独立执行 node --test test/life-core.test.js test/revision.test.js：29 passed / 0 failed，exit 0。npm test 同样通过。
+- 真实 DSH 安装、禁用/启用、卸载/重装及独立开发进程强制重启后的持久恢复通过；9 个工具按生命周期撤销/恢复，原 Creator 实际创建、修改、取消、读取意图成功。
+- 原有 QQ Bridge、SnowLuma、生产 DSH 配置、登录资料与个人记忆均未修改；无真实平台发送。
 
-## 已完成
+## 本地入口
 
-仓库创建、独立本地克隆、README 与本交接文档初始化。文档随本仓库提交并同步到远端。提交版本通过 git log 或主项目交付消息核对。
+- 项目正常克隆：主项目 plugins/amadeus-life/。
+- 活跃开发实例连接的独立克隆：主项目 private/life-development/workspace/amadeus-life/。
+- 独立 DSH_HOME / Electron 数据、认证、原始日志和临时探针保留在主项目被忽略的 private/life-development/，不得整体上传。临时探针已卸载清理，Life 保留安装供继续开发。
+- 分支 codex/life-core；远端 https://github.com/jeskoky-pixel/amadeus-life 。
 
-## 计划职责
+## 文档与证据
 
-管理跨场景注意力、可调整的未来意图、活动调度、可选心跳与统一预算协调。
+- docs/INSTALL.md：实际安装/配置接口与公共服务语义。
+- docs/verification/REPORT.md：审查、测试、集成、预算与限制。
+- docs/verification/creator-and-runtime.json：实际 Creator/模型/工作空间、用量和集成阶段。
+- docs/verification/source-manifest.json：被验证源码的内容哈希；最终 SHA 见 PR/交付消息。
+- docs/adr/0001-life-runtime.md：为何研究 Schedule/Jobs 后选本地事务 outbox 与轻量 tick。
 
-通过 QQ 的事件、排队和唤醒接口协作，不独立争抢 QQ 收发；到期重新考虑，不盲发旧台词。不依赖 State 或向量记忆运行。
+## 下一步及限制
 
-## 下一步
+1. 接入经过授权的 DSH 唤醒/事件消费适配器；不要把本地 outbox 当成已完成自动生活或外发。
+2. 未来 provider 在执行前重新检查 scope、revision 与最新授权；模型不得自行提供可信证据或授权字段。
+3. 更多故障点、多进程/多机器压力与真实平台能力另行验证。本轮只验证合成数据和独立开发环境。
+4. 插件许可证仍待拥有者明确，不自动继承主仓库 MIT；private=true 是 npm 防误发设置，GitHub 仓库保持公开。
 
-在 M0 与基础契约核实后，确定意图账本、事件接口、revision、取消与预算语义；优先用模拟时钟验证。
-
-需求与验收关注：R-06、R-08、R-09、R-12、R-15、R-17；重点验收 A-06、A-11、A-14—A-16。
-
-先阅读 README、主仓库 HANDOFF、多仓库约定和相关规格章节。正式开发由 Codex 编写有明确路径、契约、验收和预算的任务包；DSH 使用隔离开发 home 和工作区，不继承生产账号、记忆或发布凭据。
-
-## 未运行与限制
-
-- 未实施插件代码、构建、安装、升级、卸载或发布流程。
-- 未验证实际 DSH、QQ、NapCat、设备或其他平台兼容性。
-- 未运行本插件功能、契约、降级、权限或集成验收。
-- 当前无契约兼容版本、release 或可安装依赖组合。
-- 本仓库许可证未确定；任何第三方复用均须单独核查。
-
-文档初始化不能计为产品验收通过。保留可选依赖边界，授权失败时不放行受影响动作；不把计划、超时或取消请求记作完成。
-
-## 本地同步
-
-在本仓库目录内查看 git status、git log 和 git remote -v；主项目不会代为跟踪本仓库文件。拉取与推送针对本仓库的 origin；主仓库的 plugins/ 被忽略，不使用 Git Submodule。
+生产环境保护和仅开发 Life 的边界继续有效。

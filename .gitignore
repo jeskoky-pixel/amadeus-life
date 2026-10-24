@@ -9,3 +9,8 @@
 /memory/
 /profiles/
 node_modules/
+
+# Local SQLite runtime files and evidence stay out of Git.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

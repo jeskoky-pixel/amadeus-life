@@ -1,0 +1,18 @@
+{
+  "algorithm": "SHA256",
+  "lineEndings": "LF",
+  "files": {
+    "cordis.patch.yml": "00bb25fe2ecebe1350ea9b46e9f775c305a2b060629a7b52fef81f410313dd96",
+    "icon.svg": "8503ed3abac3299af5527e75011a18dd8eced06bde7c8d8e987de5f747aa1100",
+    "locale/en.json": "bfed6a7d8df24558219894bf09c7272b2a477d04ec532cc7efd8a5b57e0bdcb7",
+    "locale/zh.json": "daa9d78a96958199bc387d89f44c1d3f024e7c7638845adfa8f7501d4f474768",
+    "package.json": "42101da5f95308967ef1446cc4a3f1d3257f9004ce6565798ab5872b08cf7ac5",
+    "src/core.js": "1442fa9a18be7e929e0a4a32ca2f73f4f897b96d0a55d7b7a81cc28a8e8bb76b",
+    "src/index.js": "032abb3c9fc487a06365c93a8d039b2350a35b375680f8d0a21e5b5da6e65ab0",
+    "src/model.js": "5710295e55c9bd4d27a80d055f2ffc7287a23a23a010a092d526a0cc5bc0c5bc",
+    "src/store.js": "ba415aff1bc697089c798d1f5965dbe8829651408314c6c009797ebef1bbda22",
+    "test/life-core.test.js": "eda0f9645cb85981398f1dbf1cccb53b6df41228ee54cd8b101104a84cc13e49",
+    "test/revision.test.js": "39d2909133a2691aa19ce9e15b3c5d76934157feeb35b4ff4e36a89d252ec006",
+    "test/t07-worker.js": "3c861af055fdfc408a8d975d599263e332e22b19de1400062040497379aee100"
+  }
+}

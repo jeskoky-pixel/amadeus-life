@@ -314,6 +314,29 @@ test('H6 completion observed before admission is reconciled from evidence', asyn
   assert.equal(wake.executedTurnSeq, 2)
 })
 
+test('H20 a consumed wake remains executed when its intent is cancelled in the same turn', async () => {
+  const { life, clock, agents, emitSession } = setup({
+    delivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const intent = seedDue(life, clock)
+  await life.driveDueWakesOnce()
+  const message = messageFor(agents.get(SESSION_A))
+  const wake = life.listWakes()[0]
+
+  emitSession(SESSION_A, { type: 'turn/start', seq: 10, data: { turn: 2 } })
+  emitSession(SESSION_A, {
+    type: 'user/message', seq: 11,
+    data: { id: message.id, role: 'user', content: message.content, source: message.source },
+  })
+  assert.equal(life.getWakeConsumption(wake.id)?.validAtConsumption, 1)
+  life.cancelIntent(intent.id, { scope: `session:${SESSION_A}`, expectedRevision: 1 })
+  emitSession(SESSION_A, { type: 'turn/end', seq: 20, data: { turn: 2, reason: { kind: 'completed' } } })
+
+  assert.equal(life.getWake(wake.id).status, 'executed')
+  assert.equal(life.getWakeConsumption(wake.id)?.turnReason, 'completed')
+  assert.equal(life.getIntent(intent.id, { scope: `session:${SESSION_A}` }).status, 'cancelled')
+})
+
 test('H7 cancellation or local acknowledgement during resolve prevents delivery', async () => {
   for (const race of ['cancel', 'acknowledge']) {
     const gate = deferred()

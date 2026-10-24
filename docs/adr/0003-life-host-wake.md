@@ -17,6 +17,12 @@ ADR 0002 made wake requests durable but local-only. The official Host pattern is
 
 If `enabled` is true but `sessionController.resolveAgent` or `sessions.flush` (or `ctx.on`) is missing, the adapter reports `delivery.state = 'degraded'`, `reason = 'missing_capability'`, starts no listener/timer, and `driveDueWakesOnce()` returns `unavailable`. A listener-registration throw is treated the same way; delivery setup can never fail the whole Life plugin. Core Life tools remain usable. A disabled configuration reports `state = 'disabled'` and performs no tick, prepare, claim, resolve, or follow-up.
 
+### 1a. Optional Host-service injection
+
+Life's plugin dependency declaration stays `inject: ['tools']`. Session delivery services are acquired **optionally** through `ctx.inject(['sessionController', 'sessions'], scope => ...)`, the supported Cordis way for services a plain `ctx.get()` cannot see in the plugin's own scope. The callback binds `scope.sessionController`, `scope.sessions.flush`, and a `scope.on('session/event', handler, {global:true})` listener. A generation counter makes stale cleanup (dependency withdrawn or replaced) unable to detach a newer binding; each bind tears down the previous listener/timer, so re-injection never duplicates them. Until the callback fires, delivery is `degraded/awaiting_services` and `driveDueWakesOnce()` returns `unavailable`; Life core tools work normally. Withdrawal removes the listener/timer and returns delivery to `awaiting_services` without closing Life. For fake/older Hosts without `ctx.inject`, the adapter falls back to direct `ctx.get` lookup plus `ctx.on`, still degrading only delivery.
+
+Each claimed wake also captures the binding generation that claimed it. Delivery rechecks that generation after the asynchronous `resolveAgent`, again immediately before `followup`, and after the asynchronous `flush`. A withdrawal or rebind during resolve therefore cannot deliver the old Agent's message in the new scope; the wake becomes `uncertain` (or stays `claimed` when Life itself is disposing) and is not automatically resent. A withdrawal during flush never records `admitted` or `executed`; the wake is conservatively `uncertain`/`claimed` even if the flush later reports success.
+
 ### 2. Bounded, single-instance drive
 
 `driveDueWakesOnce()` is exposed on the trusted `life` service for controlled verification. It is serialized by an in-flight flag (`busy` on overlap) and each drive:

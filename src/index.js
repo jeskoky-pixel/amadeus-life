@@ -334,14 +334,9 @@ export function apply(ctx, config = {}) {
     return
   }
 
-  const sessionController = optionalService(ctx, 'sessionController')
-  const sessions = optionalService(ctx, 'sessions')
   const wakeHost = new WakeHost({
     core,
     ownerId,
-    sessionController,
-    flushSession:
-      typeof sessions?.flush === 'function' ? (session) => sessions.flush(session) : undefined,
     enabled: delivery.enabled,
     allowedSessionIds: delivery.allowedSessionIds,
     intervalMs: delivery.intervalMs,
@@ -349,6 +344,72 @@ export function apply(ctx, config = {}) {
     clock: config.clock ?? (() => Date.now()),
     logger: ctx.logger,
   })
+
+  /** @type {{dispose?: () => void} | (() => void) | null} */
+  let injectionHandle = null
+  const disposeInjection = () => {
+    const handle = injectionHandle
+    injectionHandle = null
+    try {
+      if (typeof handle === 'function') handle()
+      else if (typeof handle?.dispose === 'function') handle.dispose()
+    } catch {
+      // Injection teardown is best-effort; wakeHost.stop already ran.
+    }
+  }
+
+  /**
+   * Bind delivery to services supplied by an optional Cordis injection scope.
+   * Never fails Life activation: a bad binding degrades delivery only.
+   * @param {Record<string, unknown>} scope - injected child context.
+   */
+  const bindFromScope = (scope) => {
+    try {
+      const registerListener =
+        typeof scope?.on === 'function'
+          ? (handler) => scope.on('session/event', handler, { global: true })
+          : typeof ctx.on === 'function'
+            ? (handler) => ctx.on('session/event', handler, { global: true })
+            : undefined
+      const generation = wakeHost.bindHost({
+        sessionController: scope?.sessionController,
+        sessions: scope?.sessions,
+        registerListener,
+      })
+      if (typeof scope?.effect === 'function') {
+        scope.effect(() => () => wakeHost.unbindHost(generation))
+      }
+    } catch {
+      wakeHost.markMissing(['sessionController.resolveAgent', 'sessions.flush', 'ctx.on'])
+    }
+  }
+
+  if (delivery.enabled) {
+    if (typeof ctx.inject === 'function') {
+      try {
+        injectionHandle = ctx.inject(['sessionController', 'sessions'], (scope) => bindFromScope(scope))
+      } catch {
+        // Optional injection is a delivery capability, not a Life requirement.
+        wakeHost.markMissing(['sessionController.resolveAgent', 'sessions.flush', 'ctx.on'])
+      }
+    } else {
+      // Fallback for fake/older Hosts without ctx.inject.
+      const sessionController = optionalService(ctx, 'sessionController')
+      const sessions = optionalService(ctx, 'sessions')
+      const missing = []
+      if (typeof sessionController?.resolveAgent !== 'function') missing.push('sessionController.resolveAgent')
+      if (typeof sessions?.flush !== 'function') missing.push('sessions.flush')
+      if (typeof ctx.on !== 'function') missing.push('ctx.on')
+      if (missing.length > 0) wakeHost.markMissing(missing)
+      else {
+        wakeHost.bindHost({
+          sessionController,
+          sessions,
+          registerListener: (handler) => ctx.on('session/event', handler, { global: true }),
+        })
+      }
+    }
+  }
 
   /** @param {Record<string, unknown>[]} events - produced reconsideration events. */
   const publish = (events) => {
@@ -362,6 +423,7 @@ export function apply(ctx, config = {}) {
     if (disposed) return
     disposed = true
     wakeHost.stop()
+    disposeInjection()
     if (timer !== null) {
       clearInterval(timer)
       timer = null
@@ -596,15 +658,6 @@ export function apply(ctx, config = {}) {
     parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
     execute: toolBody((_args, exec) => core.getScopedHealth({ scope: sessionScope(exec) })),
   })
-
-    if (delivery.enabled) {
-      wakeHost.start({
-        registerListener:
-          typeof ctx.on === 'function'
-            ? (handler) => ctx.on('session/event', handler, { global: true })
-            : undefined,
-      })
-    }
 
     if (tickIntervalMs > 0) {
       timer = setInterval(() => {

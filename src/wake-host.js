@@ -58,8 +58,6 @@ export class WakeHost {
   constructor({
     core,
     ownerId,
-    sessionController,
-    flushSession,
     enabled = false,
     allowedSessionIds,
     intervalMs,
@@ -71,8 +69,9 @@ export class WakeHost {
   }) {
     this.core = core
     this.ownerId = ownerId
-    this.sessionController = sessionController
-    this.flushSession = flushSession
+    this.sessionController = undefined
+    this.flushSession = undefined
+    this.listenerRegistrar = undefined
     this.allowed = [...new Set(allowedSessionIds ?? [])]
     this.allowedSet = new Set(this.allowed)
     this.intervalMs = intervalMs
@@ -87,8 +86,8 @@ export class WakeHost {
     this.requested = enabled === true
     this.enabled = this.requested && this.allowed.length > 0
     this.missing = []
-    if (typeof sessionController?.resolveAgent !== 'function') this.missing.push('sessionController.resolveAgent')
-    if (typeof flushSession !== 'function') this.missing.push('sessions.flush')
+    this.bound = false
+    this.bindingGeneration = 0
 
     this.timer = null
     this.listenerDisposer = null
@@ -108,7 +107,8 @@ export class WakeHost {
 
   /** @returns {Record<string, unknown>} trusted delivery health snapshot. */
   health() {
-    const state = !this.enabled ? 'disabled' : this.missing.length > 0 ? 'degraded' : 'active'
+    const usable = this.missing.length === 0 && this.bound
+    const state = !this.enabled ? 'disabled' : usable ? 'active' : 'degraded'
     return {
       state,
       reason: !this.enabled
@@ -117,8 +117,11 @@ export class WakeHost {
           : 'not_enabled'
         : this.missing.length > 0
           ? 'missing_capability'
-          : undefined,
+          : !this.bound
+            ? 'awaiting_services'
+            : undefined,
       enabled: this.enabled,
+      bound: this.bound,
       allowedSessions: this.allowed.length,
       intervalMs: this.intervalMs,
       maxPerDrive: this.maxPerDrive,
@@ -130,24 +133,36 @@ export class WakeHost {
   }
 
   /**
-   * Register the Session event listener and low-frequency timer. No side effect
-   * when disabled, without an allowlist, or when a Host capability is absent.
-   * @param {{registerListener: (handler: (session: unknown, event: unknown) => void) => (() => void)}} options - listener registrar.
+   * Bind to services supplied by an optional Cordis injection scope, or by the
+   * adapter's fallback lookup. Rebinding first tears down any previous binding,
+   * so listeners/timers never duplicate.
+   * @param {object} options - available Host services.
+   * @param {{resolveAgent: (sessionId: string) => Promise<unknown>}} [options.sessionController] - Session controller.
+   * @param {{flush: (session: unknown) => Promise<boolean>}} [options.sessions] - Session registry.
+   * @param {(handler: (session: unknown, event: unknown) => void) => (() => void)} [options.registerListener] - listener registrar.
+   * @returns {number} binding generation for safe cleanup.
    */
-  start({ registerListener } = {}) {
-    if (this.disposed || !this.enabled || this.missing.length > 0) return
-    if (typeof registerListener !== 'function') {
-      this.missing.push('ctx.on')
-      return
+  bindHost({ sessionController, sessions, registerListener } = {}) {
+    this.unbindHost()
+    const generation = this.bindingGeneration
+    this.sessionController = sessionController
+    this.flushSession = typeof sessions?.flush === 'function' ? (session) => sessions.flush(session) : undefined
+    this.listenerRegistrar = typeof registerListener === 'function' ? registerListener : undefined
+    this.missing = []
+    if (typeof this.sessionController?.resolveAgent !== 'function') {
+      this.missing.push('sessionController.resolveAgent')
     }
+    if (typeof this.flushSession !== 'function') this.missing.push('sessions.flush')
+    if (this.listenerRegistrar === undefined) this.missing.push('ctx.on')
+    if (!this.enabled || this.disposed || this.missing.length > 0) return generation
     try {
-      this.listenerDisposer = registerListener((session, event) => this.handleSessionEvent(session, event))
+      this.listenerDisposer = this.listenerRegistrar((session, event) => this.handleSessionEvent(session, event))
     } catch {
       // Listener registration is a delivery-only capability. Registration
       // failure must degrade delivery, not fail the whole Life plugin.
       this.listenerDisposer = null
       this.missing.push('ctx.on')
-      return
+      return generation
     }
     this.timer = this.setIntervalFn(() => {
       this.driveOnce().catch((error) => {
@@ -156,12 +171,18 @@ export class WakeHost {
       })
     }, this.intervalMs)
     this.timer?.unref?.()
+    this.bound = true
+    return generation
   }
 
-  /** Stop the timer and listener; later async completions must not touch core. */
-  stop() {
-    if (this.disposed) return
-    this.disposed = true
+  /**
+   * Tear down one binding. A stale generation (dependency withdrawn after a
+   * newer binding) is ignored, so cleanup cannot detach the current listener.
+   * @param {number} [generation] - binding generation to release.
+   */
+  unbindHost(generation) {
+    if (generation !== undefined && generation !== this.bindingGeneration) return
+    this.bindingGeneration += 1
     if (this.timer !== null) {
       this.clearIntervalFn(this.timer)
       this.timer = null
@@ -169,9 +190,31 @@ export class WakeHost {
     try {
       this.listenerDisposer?.()
     } catch {
-      // Listener removal must not block disposal.
+      // Listener removal must not block withdrawal.
     }
     this.listenerDisposer = null
+    this.bound = false
+    this.sessionController = undefined
+    this.flushSession = undefined
+    this.listenerRegistrar = undefined
+    this.missing = []
+  }
+
+  /**
+   * Record absent Host capabilities without binding anything.
+   * @param {string[]} missing - capability names.
+   */
+  markMissing(missing) {
+    this.unbindHost()
+    this.missing = [...new Set(missing)]
+    this.bound = false
+  }
+
+  /** Stop the timer and listener; later async completions must not touch core. */
+  stop() {
+    if (this.disposed) return
+    this.disposed = true
+    this.unbindHost()
     this.watched.clear()
     this.seen.clear()
     this.currentTurn.clear()
@@ -187,6 +230,7 @@ export class WakeHost {
     if (this.disposed) return { status: 'disposed', delivered: [] }
     if (!this.enabled) return { status: 'disabled', delivered: [] }
     if (this.missing.length > 0) return { status: 'unavailable', missing: [...this.missing], delivered: [] }
+    if (!this.bound) return { status: 'unavailable', reason: 'awaiting_services', delivered: [] }
     if (this.running) return { status: 'busy', delivered: [] }
     this.running = true
     const delivered = []
@@ -198,12 +242,15 @@ export class WakeHost {
       let claimed = 0
       for (const sessionId of this.allowed) {
         if (this.disposed || claimed >= this.maxPerDrive) break
+        const bindingGeneration = this.bindingGeneration
+        if (!this.#isCurrentBinding(bindingGeneration)) break
         if (this.core.hasUnreconciledWakeForSession(sessionId)) continue
         const wake = this.core.claimNextWake({ ownerId: this.ownerId, targetSessionId: sessionId })
         if (wake === null) continue
         claimed += 1
-        const outcome = await this.deliver(wake)
+        const outcome = await this.deliver(wake, bindingGeneration)
         if (outcome !== null && outcome.status !== 'superseded') delivered.push(outcome)
+        if (!this.#isCurrentBinding(bindingGeneration)) break
       }
       this.lastError = null
       return { status: 'ok', delivered }
@@ -217,17 +264,26 @@ export class WakeHost {
 
   /**
    * Deliver one claimed wake: resolve, recheck, followup, flush, admission.
+   * The binding generation captured at claim time is rechecked after every
+   * await and before followup; a withdrawn/replaced binding can never deliver
+   * the old resolve's Agent in the new scope.
    * @param {Record<string, unknown>} wake - claimed wake.
+   * @param {number} bindingGeneration - generation that claimed this wake.
    * @returns {Promise<Record<string, unknown> | null>} delivery outcome.
    */
-  async deliver(wake) {
+  async deliver(wake, bindingGeneration) {
+    if (!this.#isCurrentBinding(bindingGeneration)) {
+      return this.#uncertain(wake, 'host binding changed before resolve')
+    }
     let resolved
     try {
       resolved = await this.sessionController.resolveAgent(wake.targetSessionId)
     } catch (error) {
       return this.#uncertain(wake, `resolve threw: ${messageOf(error)}`)
     }
-    if (this.disposed) return { status: 'disposed', wakeId: wake.id }
+    if (!this.#isCurrentBinding(bindingGeneration)) {
+      return this.#uncertain(wake, 'host binding changed during resolve')
+    }
     if (resolved === null || typeof resolved !== 'object' || resolved.error !== undefined || resolved.agent === undefined) {
       return this.#uncertain(wake, 'resolve failed')
     }
@@ -239,6 +295,9 @@ export class WakeHost {
       return { status: 'error', wakeId: wake.id, reason: messageOf(error) }
     }
     if (recheck.valid !== true) return { status: 'superseded', wakeId: wake.id, reason: recheck.reason }
+    if (!this.#isCurrentBinding(bindingGeneration)) {
+      return this.#uncertain(wake, 'host binding changed before followup')
+    }
 
     const agent = resolved.agent
     const message = {
@@ -259,7 +318,9 @@ export class WakeHost {
     } catch {
       flushed = false
     }
-    if (this.disposed) return { status: 'disposed', wakeId: wake.id }
+    if (!this.#isCurrentBinding(bindingGeneration)) {
+      return this.#uncertain(wake, 'host binding changed during flush; delivery unconfirmed')
+    }
     if (flushed !== true) return this.#uncertain(wake, 'flush unconfirmed')
 
     try {
@@ -283,6 +344,12 @@ export class WakeHost {
       }
       return { status: 'uncertain', wakeId: wake.id, reason: 'admission failed' }
     }
+  }
+
+  /** @param {number} generation - binding generation.
+   * @returns {boolean} whether that exact binding is still current. */
+  #isCurrentBinding(generation) {
+    return !this.disposed && this.bound && this.bindingGeneration === generation
   }
 
   /** @param {Record<string, unknown>} wake @param {string} reason */

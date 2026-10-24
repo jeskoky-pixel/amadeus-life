@@ -544,3 +544,229 @@ test('H13 missing session event listener capability degrades delivery without cl
   assert.equal(life.listIntents({ scope: `session:${SESSION_A}` }).length, 1)
   host.disposers.forEach((dispose) => dispose())
 })
+
+test('H16 delayed optional injection binds, withdraws, and rebinds without duplicates', async () => {
+  const clock = makeClock()
+  const databasePath = join(tempDir(), 'life.sqlite')
+  const host = fakeHost()
+  host.ctx.get = () => undefined
+  const injections = []
+  let injectionDisposals = 0
+  host.ctx.inject = (names, callback) => {
+    injections.push({ names, callback })
+    return () => {
+      injectionDisposals += 1
+    }
+  }
+  const effectDisposers = []
+  const makeScope = () => ({
+    sessionController: host.ctx.sessionController,
+    sessions: host.ctx.sessions,
+    on: host.ctx.on.bind(host.ctx),
+    effect: (fn) => {
+      effectDisposers.push(fn())
+    },
+  })
+  apply(host.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life = host.provided.get('life')
+  assert.deepEqual(injections[0].names, ['sessionController', 'sessions'])
+  assert.equal(life.getHealth().delivery.state, 'degraded')
+  assert.equal(life.getHealth().delivery.reason, 'awaiting_services')
+  seedDue(life, clock)
+  assert.equal((await life.driveDueWakesOnce()).status, 'unavailable')
+  assert.equal(host.agents.get(SESSION_A)?.followups.length ?? 0, 0)
+
+  injections[0].callback(makeScope())
+  assert.equal(life.getHealth().delivery.state, 'active')
+  assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 1)
+  assert.equal((await life.driveDueWakesOnce()).status, 'ok')
+  assert.equal(host.agents.get(SESSION_A).followups.length, 1)
+
+  effectDisposers[0]()
+  assert.equal(life.getHealth().delivery.state, 'degraded')
+  assert.equal(life.getHealth().delivery.reason, 'awaiting_services')
+  assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 0)
+  assert.equal((await life.driveDueWakesOnce()).status, 'unavailable')
+
+  injections[0].callback(makeScope())
+  assert.equal(life.getHealth().delivery.state, 'active')
+  assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 1)
+  effectDisposers[0]()
+  assert.equal(life.getHealth().delivery.state, 'active')
+  seedDue(life, clock)
+  await life.driveDueWakesOnce()
+  assert.equal(host.agents.get(SESSION_A).followups.length, 1)
+
+  effectDisposers[1]()
+  assert.equal(life.getHealth().delivery.state, 'degraded')
+  injections[0].callback(makeScope())
+  assert.equal(life.getHealth().delivery.state, 'active')
+  assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 1)
+
+  host.disposers.forEach((dispose) => dispose())
+  assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 0)
+  assert.equal(injectionDisposals, 1)
+})
+
+test('H15 optional Cordis injection exposes Host services absent from plain ctx.get', async () => {
+  const clock = makeClock()
+  const databasePath = join(tempDir(), 'life.sqlite')
+  const host = fakeHost()
+  host.ctx.get = () => undefined
+  host.ctx.inject = (names, callback) => {
+    assert.deepEqual(names, ['sessionController', 'sessions'])
+    callback({
+      sessionController: host.ctx.sessionController,
+      sessions: host.ctx.sessions,
+      on: host.ctx.on.bind(host.ctx),
+    })
+  }
+  apply(host.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life = host.provided.get('life')
+  seedDue(life, clock)
+  assert.equal((await life.driveDueWakesOnce()).status, 'ok')
+  assert.equal(host.agents.get(SESSION_A).followups.length, 1)
+  host.disposers.forEach((dispose) => dispose())
+})
+
+test('H18 withdrawing Host services during flush never records admission or execution', async () => {
+  const clock = makeClock()
+  const databasePath = join(tempDir(), 'life.sqlite')
+  const flushStarted = deferred()
+  const flushGate = deferred()
+  const host = fakeHost({
+    flush: async () => {
+      flushStarted.resolve()
+      await flushGate.promise
+      return true
+    },
+  })
+  host.ctx.get = () => undefined
+  const scopeDisposers = []
+  host.ctx.inject = (_names, callback) => callback({
+    sessionController: host.ctx.sessionController,
+    sessions: host.ctx.sessions,
+    on: host.ctx.on.bind(host.ctx),
+    effect: (fn) => scopeDisposers.push(fn()),
+  })
+  apply(host.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life = host.provided.get('life')
+  seedDue(life, clock)
+  const drive = life.driveDueWakesOnce()
+  await flushStarted.promise
+  assert.equal(host.agents.get(SESSION_A).followups.length, 1)
+  scopeDisposers[0]()
+  flushGate.resolve()
+  await drive
+  const wake = life.listWakes()[0]
+  assert.notEqual(wake.status, 'admitted')
+  assert.notEqual(wake.status, 'executed')
+  assert.equal(wake.executedAt, null)
+  assert.ok(['uncertain', 'claimed'].includes(wake.status))
+  assert.equal(life.getHealth().delivery.state, 'degraded')
+  host.disposers.forEach((dispose) => dispose())
+})
+
+test('H19 rebinding during resolve prevents the old Agent from delivering', async () => {
+  const gate = deferred()
+  const started = deferred()
+  const clock = makeClock()
+  const databasePath = join(tempDir(), 'life.sqlite')
+  const host = fakeHost({
+    resolveAgent: async (sessionId) => {
+      started.resolve()
+      await gate.promise
+      const entry = host.agents.get(sessionId) ?? { followups: [], steers: 0, cancels: 0, snapshot: [] }
+      host.agents.set(sessionId, entry)
+      return {
+        agent: {
+          session: { id: sessionId, snapshotEvents: () => [] },
+          followup: (message) => entry.followups.push(message),
+          steer() {},
+          cancel() {},
+        },
+      }
+    },
+  })
+  host.ctx.get = () => undefined
+  const injections = []
+  host.ctx.inject = (_names, callback) => {
+    injections.push(callback)
+    return () => {}
+  }
+  const scopeDisposers = []
+  const makeScope = () => ({
+    sessionController: host.ctx.sessionController,
+    sessions: host.ctx.sessions,
+    on: host.ctx.on.bind(host.ctx),
+    effect: (fn) => scopeDisposers.push(fn()),
+  })
+  apply(host.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life = host.provided.get('life')
+  injections[0](makeScope())
+  assert.equal(life.getHealth().delivery.state, 'active')
+  seedDue(life, clock)
+  const drive = life.driveDueWakesOnce()
+  await started.promise
+  scopeDisposers[0]()
+  injections[0](makeScope())
+  assert.equal(life.getHealth().delivery.state, 'active')
+  gate.resolve()
+  await drive
+  assert.equal(host.agents.get(SESSION_A)?.followups.length ?? 0, 0)
+  const wake = life.listWakes()[0]
+  assert.ok(['uncertain', 'claimed'].includes(wake.status))
+  assert.equal(wake.executedAt, null)
+  host.disposers.forEach((dispose) => dispose())
+})
+
+test('H17 withdrawing Host services during resolve prevents a late followup', async () => {
+  const gate = deferred()
+  const started = deferred()
+  const clock = makeClock()
+  const databasePath = join(tempDir(), 'life.sqlite')
+  const host = fakeHost({
+    resolveAgent: async (sessionId) => {
+      started.resolve()
+      await gate.promise
+      const entry = host.agents.get(sessionId) ?? { followups: [], snapshot: [] }
+      host.agents.set(sessionId, entry)
+      return { agent: { session: { id: sessionId, snapshotEvents: () => [] }, followup: (message) => entry.followups.push(message) } }
+    },
+  })
+  host.ctx.get = () => undefined
+  const scopeDisposers = []
+  host.ctx.inject = (_names, callback) => callback({
+    sessionController: host.ctx.sessionController,
+    sessions: host.ctx.sessions,
+    on: host.ctx.on.bind(host.ctx),
+    effect: (fn) => scopeDisposers.push(fn()),
+  })
+  apply(host.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life = host.provided.get('life')
+  seedDue(life, clock)
+  const drive = life.driveDueWakesOnce()
+  await started.promise
+  scopeDisposers[0]()
+  gate.resolve()
+  await drive
+  assert.equal(host.agents.get(SESSION_A)?.followups.length ?? 0, 0)
+  assert.equal(life.getHealth().delivery.state, 'degraded')
+  assert.equal(life.listWakes({ status: 'executed' }).length, 0)
+  host.disposers.forEach((dispose) => dispose())
+})

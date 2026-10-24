@@ -1,5 +1,11 @@
 # amadeus-life 交接
 
+## 最新检查点：可信 Host 到期唤醒首段（2026-10-25）
+
+- 原 cordis Creator 实现管理员显式启用、Session allowlist、官方 `resolveAgent → followup → sessions.flush` 的 Life Host adapter；Codex 的跨 Session 伪证、500 行旧 wake 遮蔽、缺失事件监听、可选服务注入及服务撤销竞态回归均经同一 Creator 会话定点返工。独立标准 `node --test` 为 85/85，`npm test` 全部通过。
+- 真正的隔离 DSH Desktop 验收：先冷备份 profile 与 SQLite，仅临时允许已有合成 Session；首次发现普通 `ctx.get` 拿不到 Host 服务，修正为 Cordis 可选 `ctx.inject` 后真实投递成功。wake 先为 admitted；Session 持久日志含 `amadeus-life` 来源、匹配 message/wake ID、第 2 个 completed turn。模型只调用 `life_health`、`life_intent_list`、`life_intent_cancel`，自主取消该合成意图，无真实平台外发。取消使 wake 保守变 `superseded`；这证明真实消费但当前 ledger 未记 `executed`，消费与意图失效的区分需下一段修复。重复 drive 和重启均未重投。最后逐字节恢复原隔离 profile patch、撤销私有探针加载，原 Session/Workspace/SQLite 保留。见 [Host 首段验收](docs/verification/HOST_WAKE_SLICE_2026-10-25.md)。
+- 包仍标 0.1.0，当前只具备显式受控的到期意图唤醒，不含 idle、完整预算、统一身份、Provider 或 v1.0 十场景；继续原 Creator 会话迭代，不把此首段称为 v1.0 完成。
+
 ## 最新检查点：SQLite v3 wake ledger（2026-10-25）
 
 - 原 cordis Creator 会话完成 v2→v3 增量迁移与 `intent_due` 持久 wake ledger；Codex 独立审查发现并先复现三项缺口（过期 admitted 状态回滚、非法 Session 形状候选饥饿、已确认本地事件仍可领取），同一 Creator 会话定点返工并增加 admission 竞争回归。`node --test test/wake-ledger.test.js test/quality-gaps.test.js test/life-core.test.js test/revision.test.js` 为 66/66，`npm test` 各文件 18+20+9+19 项通过，退出码均 0。

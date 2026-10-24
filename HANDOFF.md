@@ -1,5 +1,12 @@
 # amadeus-life 交接
 
+## 最新检查点：0.1.0 四项质量修复（2026-10-25）
+
+- 原 cordis Creator 会话继续完成主要实现；失败回归独立提交 `889be0a`，修复独立提交 `92fc18b`。Codex 审查中补充了多活动/单焦点和合法单向关联回归并交回同一会话返工。
+- `node --test test/quality-gaps.test.js test/life-core.test.js test/revision.test.js`：47/47 通过，exit 0；`npm test` 同样通过。原 29 项仍通过。详见 [质量修复验收](docs/verification/QUALITY_FIX_2026-10-25.md)。
+- 真实隔离 DSH 中服务与 9 工具加载、停用/启用、卸载/重装均通过；强制重启后持久意图保留，运行活动进入 `unknown`，不伪造完成。临时诊断探针已移除；原 Session、Workspace、SQLite 和开发包保留。
+- 包仍为 0.1.0，SQLite schema 2。尚无真正 DSH 自动唤醒、可信 Provider 回执协议、统一 Persona、注意力调度或预算；这些属于已授权的连续 Life v1.0 开发，下一步先形成 0.2.0 架构和真实 Session Controller 接入任务。下文旧交接记录是修复前状态，不覆盖此检查点。
+
 日期：2026-10-25。状态：0.1.0 开发版核心已验收；尚未发布 release、npm 包或部署生产。
 
 ## 当前能做什么

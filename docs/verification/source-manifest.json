@@ -6,12 +6,13 @@
     "icon.svg": "8503ed3abac3299af5527e75011a18dd8eced06bde7c8d8e987de5f747aa1100",
     "locale/en.json": "bfed6a7d8df24558219894bf09c7272b2a477d04ec532cc7efd8a5b57e0bdcb7",
     "locale/zh.json": "daa9d78a96958199bc387d89f44c1d3f024e7c7638845adfa8f7501d4f474768",
-    "package.json": "42101da5f95308967ef1446cc4a3f1d3257f9004ce6565798ab5872b08cf7ac5",
-    "src/core.js": "1442fa9a18be7e929e0a4a32ca2f73f4f897b96d0a55d7b7a81cc28a8e8bb76b",
-    "src/index.js": "032abb3c9fc487a06365c93a8d039b2350a35b375680f8d0a21e5b5da6e65ab0",
-    "src/model.js": "5710295e55c9bd4d27a80d055f2ffc7287a23a23a010a092d526a0cc5bc0c5bc",
+    "package.json": "460ee9d127b0f500ab69ca6c5b614a7fa8d1705e2c197b9208f83fb2188fb170",
+    "src/core.js": "4f4e9cd11086bedb79708853ab2a811630e922ce41d4749f21adb8cb12021988",
+    "src/index.js": "57b2bc82f3d5312856edf45eaa5cda202db081b8b47615a95730d930ea9400ed",
+    "src/model.js": "f38d8b5004920e31b581ae3187142e2f0d21d17a9b89032061bd5cb1549f7ea6",
     "src/store.js": "ba415aff1bc697089c798d1f5965dbe8829651408314c6c009797ebef1bbda22",
-    "test/life-core.test.js": "eda0f9645cb85981398f1dbf1cccb53b6df41228ee54cd8b101104a84cc13e49",
+    "test/life-core.test.js": "ae974cc86f36a9ade15d24cf1e4a1cfc0d4f9ae697c4e23c3364dd61162a3aae",
+    "test/quality-gaps.test.js": "7472144fbe78f7847f76982c5b770e574b9c1a16ef0eb683a2d072074f4a4bfb",
     "test/revision.test.js": "39d2909133a2691aa19ce9e15b3c5d76934157feeb35b4ff4e36a89d252ec006",
     "test/t07-worker.js": "3c861af055fdfc408a8d975d599263e332e22b19de1400062040497379aee100"
   }

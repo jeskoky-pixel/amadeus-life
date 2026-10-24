@@ -2,7 +2,7 @@
 
 管理跨场景注意力、可调整的未来意图、活动调度、可选心跳与统一预算协调。
 
-**当前状态：仅仓库与文档初始化，无实现、安装包或正式发布；尚未完成平台联调。**
+**当前状态：M0 QQ ↔ Life 最小接口草案。无运行时实现、安装包或正式发布，尚未完成平台联调。**
 
 项目入口：[Amadeus-dsh](https://github.com/jeskoky-pixel/Amadeus-dsh)。开发顺序：P0。当前仓库为私有。
 
@@ -19,6 +19,8 @@
 ## 开发入口
 
 - [HANDOFF.md](HANDOFF.md)：当前状态、下一步与未运行检查。
+- [M0 模块边界](docs/M0.md)
+- [QQ ↔ Life 契约草案](docs/contracts/qq-life-v0.1.md)
 - [总体规格](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/main/docs/AMADEUS_SPEC.md)
 - [多仓库约定](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/main/docs/ARCHITECTURE.md)
 

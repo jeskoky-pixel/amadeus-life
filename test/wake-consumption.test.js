@@ -125,6 +125,28 @@ function v3Schema(db, { conflictIndex = false } = {}) {
   if (conflictIndex) db.exec('CREATE TABLE idx_wake_consumption_turn (x TEXT)')
 }
 
+function v4Fixture(db, { partialPrepared = false } = {}) {
+  v3Schema(db)
+  db.exec(`
+    CREATE TABLE wake_consumption (
+      wake_id TEXT NOT NULL, target_session_id TEXT NOT NULL, message_id TEXT NOT NULL,
+      turn_seq INTEGER NOT NULL CHECK (turn_seq >= 1), user_message_seq INTEGER NOT NULL CHECK (user_message_seq >= 1),
+      valid_at_consumption INTEGER NOT NULL CHECK (valid_at_consumption IN (0, 1)),
+      consumed_at TEXT NOT NULL, turn_end_seq INTEGER, turn_reason TEXT, completed_at TEXT,
+      updated_at TEXT NOT NULL, PRIMARY KEY (wake_id, message_id)
+    );
+    CREATE INDEX idx_wake_consumption_turn ON wake_consumption (target_session_id, turn_seq);
+  `)
+  db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version'").run()
+  db.prepare(
+    `INSERT INTO wake_consumption
+      (wake_id, target_session_id, message_id, turn_seq, user_message_seq,
+       valid_at_consumption, consumed_at, turn_end_seq, turn_reason, completed_at, updated_at)
+     VALUES ('wake-medium-admitted', ?, 'msg-v3-admitted', 2, 11, 1, ?, 20, 'completed', ?, ?)`,
+  ).run(SESSION_A, BASE, BASE, BASE)
+  if (partialPrepared) db.exec('ALTER TABLE wake_requests ADD COLUMN prepared_message_id TEXT')
+}
+
 function v2Fixture(db) {
   db.exec(`
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -186,7 +208,7 @@ test('A1 v3 store migrates to v4 preserving wakes, rows, revision and lease', ()
   const clock = makeClock()
   const core = openCore(databasePath, clock)
   try {
-    assert.equal(core.getHealth().schemaVersion, '4')
+    assert.equal(core.getHealth().schemaVersion, '5')
     assert.equal(core.getIntent('intent_v3_keep', { scope: SCOPE }).revision, 2)
     assert.equal(core.getActivity('activity_v3_keep', { scope: SCOPE }).status, 'running')
     const wakes = core.listWakes()
@@ -200,7 +222,7 @@ test('A1 v3 store migrates to v4 preserving wakes, rows, revision and lease', ()
   }
   const raw = new DatabaseSync(databasePath)
   try {
-    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '4')
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '5')
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wake_consumption'").get())
     assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM intents').get().n, 1)
     assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM wake_requests').get().n, 2)
@@ -210,7 +232,7 @@ test('A1 v3 store migrates to v4 preserving wakes, rows, revision and lease', ()
   }
   const reopened = openCore(databasePath, clock)
   try {
-    assert.equal(reopened.getHealth().schemaVersion, '4')
+    assert.equal(reopened.getHealth().schemaVersion, '5')
     assert.equal(reopened.listWakes().length, 2)
   } finally {
     reopened.close()
@@ -228,7 +250,7 @@ test('A2 v2 store migrates atomically to v4 with all tables and rows', () => {
   }
   const core = openCore(databasePath, makeClock())
   try {
-    assert.equal(core.getHealth().schemaVersion, '4')
+    assert.equal(core.getHealth().schemaVersion, '5')
     assert.equal(core.getIntent('intent_v2_keep', { scope: SCOPE }).revision, 2)
     assert.deepEqual(core.listWakes(), [])
   } finally {
@@ -236,7 +258,7 @@ test('A2 v2 store migrates atomically to v4 with all tables and rows', () => {
   }
   const raw = new DatabaseSync(databasePath)
   try {
-    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '4')
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '5')
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE name='wake_requests'").get())
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE name='wake_consumption'").get())
     assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM intents').get().n, 1)
@@ -301,9 +323,67 @@ test('A4 concurrent openers migrate a healthy v3 store exactly once', async () =
     ),
   )
   await Promise.all(workers.map((worker) => worker.terminate()))
-  assert.deepEqual(versions.slice().sort(), ['4', '4'])
-  assert.equal(rawRow(databasePath, "SELECT value FROM meta WHERE key='schema_version'").value, '4')
+  assert.deepEqual(versions.slice().sort(), ['5', '5'])
+  assert.equal(rawRow(databasePath, "SELECT value FROM meta WHERE key='schema_version'").value, '5')
   assert.ok(rawRow(databasePath, "SELECT name FROM sqlite_master WHERE name='wake_consumption'"))
+})
+
+test('A5 v4 store migrates to v5 preserving wakes and existing evidence', () => {
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const fixture = new DatabaseSync(databasePath)
+  try {
+    v4Fixture(fixture)
+  } finally {
+    fixture.close()
+  }
+  const clock = makeClock()
+  const core = openCore(databasePath, clock)
+  try {
+    assert.equal(core.getHealth().schemaVersion, '5')
+    assert.equal(core.listWakes().length, 2)
+    assert.equal(core.getWake('wake-medium-admitted').status, 'admitted')
+    assert.equal(core.getWake('wake-medium-admitted').preparedMessageId, null)
+    const evidence = core.getWakeConsumption('wake-medium-admitted')
+    assert.equal(evidence.validAtConsumption, 1)
+    assert.equal(evidence.validityKnown, 1)
+    assert.equal(evidence.turnReason, 'completed')
+  } finally {
+    core.close()
+  }
+  const raw = new DatabaseSync(databasePath)
+  try {
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '5')
+    const wakeColumns = raw.prepare("PRAGMA table_info('wake_requests')").all().map((column) => column.name)
+    assert.ok(wakeColumns.includes('prepared_message_id'))
+    assert.ok(wakeColumns.includes('prepared_at'))
+    const evidenceColumns = raw.prepare("PRAGMA table_info('wake_consumption')").all().map((column) => column.name)
+    assert.ok(evidenceColumns.includes('validity_known'))
+    assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM wake_requests').get().n, 2)
+  } finally {
+    raw.close()
+  }
+})
+
+test('A6 failed v4 migration rolls back without adding v5 columns', () => {
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const fixture = new DatabaseSync(databasePath)
+  try {
+    v4Fixture(fixture, { partialPrepared: true })
+  } finally {
+    fixture.close()
+  }
+  assert.throws(() => openCore(databasePath, makeClock()), (error) => error instanceof LifeStorageError)
+  const raw = new DatabaseSync(databasePath)
+  try {
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '4')
+    const columns = raw.prepare("PRAGMA table_info('wake_consumption')").all().map((column) => column.name)
+    assert.equal(columns.includes('validity_known'), false)
+    assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM wake_consumption').get().n, 1)
+  } finally {
+    raw.close()
+  }
 })
 
 // B. Consumption evidence ----------------------------------------------------
@@ -487,8 +567,43 @@ test('B5 consumption requires an admitted wake', () => {
         turnSeq: 2,
         userMessageSeq: 11,
       }),
-      (error) => error instanceof LifeInvalidTransitionError,
+      (error) =>
+        error instanceof LifeInvalidTransitionError || error instanceof LifeValidationError,
     )
+    assert.equal(core.getIntent(intent.id, { scope: SCOPE }).status, 'active')
+  } finally {
+    core.close()
+  }
+})
+
+test('B5b prepared claimed wake can record pre-admission consumption and completion', () => {
+  const clock = makeClock()
+  const core = openCore(join(tempDir(), 'life.sqlite'), clock)
+  try {
+    const intent = seedIntent(core, clock)
+    core.tick()
+    core.prepareDueWakes()
+    const claimed = core.claimNextWake({ ownerId: 'owner-1', targetSessionId: SESSION_A })
+    const messageId = 'msg-prepared'
+    core.prepareWakeDelivery(claimed.id, { ownerId: 'owner-1', messageId })
+    const consumed = core.recordWakeConsumed(claimed.id, {
+      targetSessionId: SESSION_A,
+      messageId,
+      turnSeq: 2,
+      userMessageSeq: 11,
+    })
+    assert.equal(consumed.validAtConsumption, 1)
+    assert.equal(consumed.validityKnown, 1)
+    assert.equal(core.getWake(claimed.id).status, 'claimed')
+    core.recordWakeTurnEnd(claimed.id, {
+      targetSessionId: SESSION_A,
+      messageId,
+      turnSeq: 2,
+      turnEndSeq: 20,
+      reason: 'completed',
+    })
+    assert.equal(core.getWake(claimed.id).status, 'executed')
+    assert.equal(core.getWake(claimed.id).executedTurnSeq, 2)
     assert.equal(core.getIntent(intent.id, { scope: SCOPE }).status, 'active')
   } finally {
     core.close()
@@ -534,6 +649,34 @@ test('B7 v3 stale-execution path remains superseded without consumption evidence
   }
 })
 
+test('B8 snapshot consumption with unknown validity can complete but never claims validity', () => {
+  const clock = makeClock()
+  const core = openCore(join(tempDir(), 'life.sqlite'), clock)
+  try {
+    const { wake, messageId } = admittedWake(core, clock)
+    core.recordWakeConsumedFromSnapshot(wake.id, {
+      targetSessionId: SESSION_A,
+      messageId,
+      turnSeq: 2,
+      userMessageSeq: 11,
+    })
+    const evidence = core.getWakeConsumption(wake.id)
+    assert.equal(evidence.validAtConsumption, 0)
+    assert.equal(evidence.validityKnown, 0)
+    core.recordWakeTurnEnd(wake.id, {
+      targetSessionId: SESSION_A,
+      messageId,
+      turnSeq: 2,
+      turnEndSeq: 20,
+      reason: 'completed',
+    })
+    assert.equal(core.getWake(wake.id).status, 'executed')
+    assert.equal(core.getWakeConsumption(wake.id).validityKnown, 0)
+  } finally {
+    core.close()
+  }
+})
+
 // C. Trusted surface ---------------------------------------------------------
 test('C1 trusted service exposes evidence methods and keeps exactly 9 model tools', () => {
   const tools = new Map()
@@ -553,7 +696,7 @@ test('C1 trusted service exposes evidence methods and keeps exactly 9 model tool
   for (const method of ['recordWakeConsumed', 'recordWakeTurnEnd', 'getWakeConsumption']) {
     assert.equal(typeof life[method], 'function', method)
   }
-  assert.equal(life.getHealth().schemaVersion, '4')
+  assert.equal(life.getHealth().schemaVersion, '5')
 })
 
 test('C2 evidence stores no prompt text, intent description, or session content', () => {

@@ -1,5 +1,11 @@
 # amadeus-life 交接
 
+## 最新检查点：SQLite v5 Host 消费接线（2026-10-25）
+
+- Codex 先提交失败回归 `4f690c1`，原 cordis Creator 第 18/19 轮主要实现实时可信 Session 消费/turn-end 接线、pre-admission 持久 message ID、官方 `projections/page` 历史对账、schema v5 安全迁移及 ADR 0005。Codex 独立标准测试 113/113，`npm test` 六组 18/20/9/19/28/19 全通过，`git diff --check` 通过。
+- 真实隔离 Desktop 停机冷备份 v4 SQLite/WAL/SHM，逐文件哈希一致；重启后原开发库 v4→v5、integrity ok，10 intents、5 events、8 activities、1 wake、1 lease 全保留，旧字段逐表摘要一致。原 Creator Session 恢复。官方隔离 `session/projections` 与 `session/page` 只读实测请求成功、事件有序、分页无重叠；v5 自动 Host 唤醒/崩溃对账的完整真实运行尚未验收，不能据此称 v1.0 完成。
+- 下一轮按用户最新指示让同一 Creator 连续实现完整 v1.0 剩余能力，减少中间关卡；最终由 Codex 统一独立审查、测试和十场景隔离验收。以下 v4/v3 文字是历史检查点。
+
 ## 最新检查点：SQLite v4 wake 消费证据（2026-10-25）
 
 - 原 cordis Creator 继续完成 v3→v4 增量迁移及可信 `recordWakeConsumed` / `recordWakeTurnEnd` / `getWakeConsumption`；消费时的意图有效性与 Session 消费/完成坐标分别保存，不增加模型工具。Codex 独立标准 `node --test` 为 100/100，`npm test` 六组均通过。

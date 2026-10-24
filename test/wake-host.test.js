@@ -109,6 +109,16 @@ function fakeHost({ flush, resolveAgent, without = [] } = {}) {
   return { ctx, tools, provided, disposers, listeners, listenerDisposers, agents, resolveCalls, emitSession }
 }
 
+function attachHistory(controller, events) {
+  const asOfSeq = events.reduce((max, event) => Math.max(max, Number(event.seq) || 0), 0)
+  controller.projections = async () => ({ kind: 'sequenced', asOfSeq, values: {} })
+  controller.page = async (request) => {
+    const selected = events.filter((event) => Number(event.seq) <= request.throughSeq)
+    return { records: selected.map((event) => ({ type: 'event', event })), hasMore: false }
+  }
+  return controller
+}
+
 function setup({ delivery, flush, resolveAgent, without } = {}) {
   const dir = tempDir()
   const clock = makeClock()
@@ -254,7 +264,7 @@ test('H5 execution requires the matching completed turn and message', async () =
   emitSession(SESSION_A, { type: 'turn/end', seq: 6, data: { turn: 5, reason: { kind: 'completed' } } })
   assert.equal(life.getWake(wake.id).status, 'admitted')
 
-  // Failed turn containing the real message stays admitted.
+  // Failed turn must not execute and leaves the wake conservative.
   emitSession(SESSION_A, { type: 'turn/start', seq: 7, data: { turn: 6 } })
   emitSession(SESSION_A, {
     type: 'user/message',
@@ -262,9 +272,10 @@ test('H5 execution requires the matching completed turn and message', async () =
     data: { id: message.id, role: 'user', content: message.content, source: message.source },
   })
   emitSession(SESSION_A, { type: 'turn/end', seq: 9, data: { turn: 6, reason: { kind: 'error' } } })
-  assert.equal(life.getWake(wake.id).status, 'admitted')
+  assert.notEqual(life.getWake(wake.id).status, 'executed')
+  assert.equal(life.getWake(wake.id).executedAt, null)
 
-  // Matching completed turn executes, recording the turn seq.
+  // Reusing the same message id in a different turn cannot fabricate execution.
   emitSession(SESSION_A, { type: 'turn/start', seq: 10, data: { turn: 7 } })
   emitSession(SESSION_A, {
     type: 'user/message',
@@ -272,10 +283,8 @@ test('H5 execution requires the matching completed turn and message', async () =
     data: { id: message.id, role: 'user', content: message.content, source: message.source },
   })
   emitSession(SESSION_A, { type: 'turn/end', seq: 12, data: { turn: 7, reason: { kind: 'completed' } } })
-  const executed = life.getWake(wake.id)
-  assert.equal(executed.status, 'executed')
-  assert.equal(executed.executedTurnSeq, 7)
-  assert.ok(executed.executedAt)
+  assert.notEqual(life.getWake(wake.id).status, 'executed')
+  assert.equal(life.getWake(wake.id).executedAt, null)
 })
 
 test('H6 completion observed before admission is reconciled from evidence', async () => {
@@ -335,6 +344,314 @@ test('H20 a consumed wake remains executed when its intent is cancelled in the s
   assert.equal(life.getWake(wake.id).status, 'executed')
   assert.equal(life.getWakeConsumption(wake.id)?.turnReason, 'completed')
   assert.equal(life.getIntent(intent.id, { scope: `session:${SESSION_A}` }).status, 'cancelled')
+})
+
+test('H22 flush crash before admission reconciles from restart snapshot', async () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const first = fakeHost({ flush: async () => false })
+  apply(first.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life1 = first.provided.get('life')
+  seedDue(life1, clock)
+  const firstResult = await life1.driveDueWakesOnce()
+  assert.equal(firstResult.delivered[0].status, 'uncertain')
+  const wake = life1.listWakes()[0]
+  assert.equal(wake.status, 'uncertain')
+  assert.ok(wake.preparedMessageId)
+  const message = first.agents.get(SESSION_A).followups[0]
+  const snapshot = [
+    { type: 'turn/start', seq: 1, data: { turn: 2 } },
+    { type: 'user/message', seq: 2, data: { id: message.id, role: 'user', content: message.content, source: message.source } },
+    { type: 'turn/end', seq: 3, data: { turn: 2, reason: { kind: 'completed' } } },
+  ]
+  first.disposers.forEach((dispose) => dispose())
+
+  const second = fakeHost()
+  second.ctx.get = () => undefined
+  second.ctx.inject = (_names, callback) => callback({
+    sessionController: second.ctx.sessionController,
+    sessions: second.ctx.sessions,
+    on: second.ctx.on.bind(second.ctx),
+  })
+  attachHistory(second.ctx.sessionController, snapshot)
+  apply(second.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life2 = second.provided.get('life')
+  await life2.driveDueWakesOnce()
+  const reconciled = life2.getWake(wake.id)
+  assert.equal(reconciled.status, 'executed')
+  assert.equal(reconciled.executedTurnSeq, 2)
+  assert.equal(life2.getWakeConsumption(wake.id).validityKnown, 0)
+  assert.equal(second.agents.get(SESSION_A)?.followups.length ?? 0, 0)
+
+  // Proven completion releases the Session for a later wake.
+  seedDue(life2, clock)
+  await life2.driveDueWakesOnce()
+  assert.equal(second.agents.get(SESSION_A).followups.length, 1)
+})
+
+test('H23 snapshot evidence outside the bounded scan window stays unreconciled', async () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const first = fakeHost({ flush: async () => false })
+  apply(first.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life1 = first.provided.get('life')
+  seedDue(life1, clock)
+  await life1.driveDueWakesOnce()
+  const wake = life1.listWakes()[0]
+  const message = first.agents.get(SESSION_A).followups[0]
+  const snapshot = [
+    { type: 'turn/start', seq: 1, data: { turn: 2 } },
+    { type: 'user/message', seq: 2, data: { id: message.id, role: 'user', content: message.content, source: message.source } },
+    { type: 'turn/end', seq: 3, data: { turn: 2, reason: { kind: 'completed' } } },
+    ...Array.from({ length: SNAPSHOT_SCAN_LIMIT + 10 }, (_, index) => ({
+      type: 'step/start', seq: 10 + index, data: { turn: 3, step: index },
+    })),
+  ]
+  first.disposers.forEach((dispose) => dispose())
+
+  const second = fakeHost()
+  second.ctx.get = () => undefined
+  second.ctx.inject = (_names, callback) => callback({
+    sessionController: second.ctx.sessionController,
+    sessions: second.ctx.sessions,
+    on: second.ctx.on.bind(second.ctx),
+  })
+  attachHistory(second.ctx.sessionController, snapshot)
+  apply(second.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life2 = second.provided.get('life')
+  await life2.driveDueWakesOnce()
+  assert.equal(life2.getWake(wake.id).status, 'uncertain')
+  assert.equal(life2.getWakeConsumption(wake.id), null)
+  seedDue(life2, clock)
+  await life2.driveDueWakesOnce()
+  assert.equal(second.agents.get(SESSION_A)?.followups.length ?? 0, 0)
+})
+
+test('H24 duplicate live events are idempotent and do not fabricate execution', async () => {
+  const { life, clock, agents, emitSession } = setup({
+    delivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  seedDue(life, clock)
+  await life.driveDueWakesOnce()
+  const message = messageFor(agents.get(SESSION_A))
+  const wake = life.listWakes()[0]
+  emitSession(SESSION_A, { type: 'turn/start', seq: 10, data: { turn: 2 } })
+  const userEvent = {
+    type: 'user/message', seq: 11,
+    data: { id: message.id, role: 'user', content: message.content, source: message.source },
+  }
+  emitSession(SESSION_A, userEvent)
+  emitSession(SESSION_A, userEvent)
+  emitSession(SESSION_A, { type: 'turn/end', seq: 20, data: { turn: 2, reason: { kind: 'completed' } } })
+  emitSession(SESSION_A, { type: 'turn/end', seq: 20, data: { turn: 2, reason: { kind: 'completed' } } })
+  assert.equal(life.getWake(wake.id).status, 'executed')
+  const evidence = life.getWakeConsumption(wake.id)
+  assert.equal(evidence.turnEndSeq, 20)
+  assert.equal(evidence.turnReason, 'completed')
+})
+
+test('H25 successful flush crash before admission reconciles a claimed prepared message', async () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const first = fakeHost()
+  apply(first.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life1 = first.provided.get('life')
+  seedDue(life1, clock)
+  life1.prepareDueWakes({ limit: 10 })
+  const wake = life1.claimNextWake({ ownerId: 'crash-owner', targetSessionId: SESSION_A })
+  const messageId = 'msg-crash-flush'
+  life1.prepareWakeDelivery(wake.id, { ownerId: 'crash-owner', messageId })
+  const snapshot = [
+    { type: 'turn/start', seq: 1, data: { turn: 2 } },
+    { type: 'user/message', seq: 2, data: { id: messageId, role: 'user', content: [], source: { kind: 'amadeus-life', wakeId: wake.id } } },
+    { type: 'turn/end', seq: 3, data: { turn: 2, reason: { kind: 'completed' } } },
+  ]
+  first.disposers.forEach((dispose) => dispose())
+
+  const second = fakeHost()
+  second.ctx.get = () => undefined
+  second.ctx.inject = (_names, callback) => callback({
+    sessionController: second.ctx.sessionController,
+    sessions: second.ctx.sessions,
+    on: second.ctx.on.bind(second.ctx),
+  })
+  attachHistory(second.ctx.sessionController, snapshot)
+  apply(second.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life2 = second.provided.get('life')
+  await life2.driveDueWakesOnce()
+  const reconciled = life2.getWake(wake.id)
+  assert.equal(reconciled.status, 'executed')
+  assert.equal(reconciled.executedTurnSeq, 2)
+  assert.equal(life2.getWakeConsumption(wake.id).validityKnown, 0)
+  assert.equal(second.agents.get(SESSION_A)?.followups.length ?? 0, 0)
+})
+
+test('H26 a mismatched message id cannot consume the admitted wake', async () => {
+  const { life, clock, agents, emitSession } = setup({
+    delivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  seedDue(life, clock)
+  await life.driveDueWakesOnce()
+  const message = messageFor(agents.get(SESSION_A))
+  const wake = life.listWakes()[0]
+  emitSession(SESSION_A, { type: 'turn/start', seq: 10, data: { turn: 2 } })
+  emitSession(SESSION_A, {
+    type: 'user/message', seq: 11,
+    data: { id: 'wrong-message', role: 'user', content: message.content, source: message.source },
+  })
+  emitSession(SESSION_A, { type: 'turn/end', seq: 20, data: { turn: 2, reason: { kind: 'completed' } } })
+  assert.equal(life.getWake(wake.id).status, 'admitted')
+  assert.equal(life.getWakeConsumption(wake.id), null)
+})
+
+test('H27 reconciliation uses page/projections without an inspect method', async () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const first = fakeHost()
+  apply(first.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life1 = first.provided.get('life')
+  seedDue(life1, clock)
+  await life1.driveDueWakesOnce()
+  const message = first.agents.get(SESSION_A).followups[0]
+  const wake = life1.listWakes()[0]
+  const snapshot = [
+    { type: 'turn/start', seq: 1, data: { turn: 2 } },
+    { type: 'user/message', seq: 2, data: { id: message.id, role: 'user', content: message.content, source: message.source } },
+    { type: 'turn/end', seq: 3, data: { turn: 2, reason: { kind: 'completed' } } },
+  ]
+  first.disposers.forEach((dispose) => dispose())
+
+  const second = fakeHost()
+  second.ctx.get = () => undefined
+  second.ctx.inject = (_names, callback) => callback({
+    sessionController: second.ctx.sessionController,
+    sessions: second.ctx.sessions,
+    on: second.ctx.on.bind(second.ctx),
+  })
+  attachHistory(second.ctx.sessionController, snapshot)
+  assert.equal(typeof second.ctx.sessionController.inspect, 'undefined')
+  assert.equal(typeof second.ctx.sessionController.page, 'function')
+  assert.equal(typeof second.ctx.sessionController.projections, 'function')
+  apply(second.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life2 = second.provided.get('life')
+  await life2.driveDueWakesOnce()
+  assert.equal(life2.getWake(wake.id).status, 'executed')
+  assert.equal(life2.getWakeConsumption(wake.id).validityKnown, 0)
+})
+
+test('H28 transient history failure retries with bounded backoff instead of staying done', async () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const first = fakeHost({ flush: async () => false })
+  apply(first.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life1 = first.provided.get('life')
+  seedDue(life1, clock)
+  await life1.driveDueWakesOnce()
+  const wake = life1.listWakes()[0]
+  assert.equal(wake.status, 'uncertain')
+  const message = first.agents.get(SESSION_A).followups[0]
+  const snapshot = [
+    { type: 'turn/start', seq: 1, data: { turn: 2 } },
+    { type: 'user/message', seq: 2, data: { id: message.id, role: 'user', content: message.content, source: message.source } },
+    { type: 'turn/end', seq: 3, data: { turn: 2, reason: { kind: 'completed' } } },
+  ]
+  first.disposers.forEach((dispose) => dispose())
+
+  const second = fakeHost()
+  second.ctx.get = () => undefined
+  second.ctx.inject = (_names, callback) => callback({
+    sessionController: second.ctx.sessionController,
+    sessions: second.ctx.sessions,
+    on: second.ctx.on.bind(second.ctx),
+  })
+  second.ctx.sessionController.projections = async () => {
+    throw new Error('transient history failure')
+  }
+  second.ctx.sessionController.page = async () => ({ records: [], hasMore: false })
+  apply(second.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life2 = second.provided.get('life')
+  await life2.driveDueWakesOnce()
+  assert.equal(life2.getWake(wake.id).status, 'uncertain')
+  assert.equal(life2.getHealth().delivery.state, 'degraded')
+  assert.equal(life2.getHealth().delivery.reconciliation, 'partial')
+  assert.equal(second.agents.get(SESSION_A)?.followups.length ?? 0, 0)
+
+  clock.advance(31_000)
+  attachHistory(second.ctx.sessionController, snapshot)
+  await life2.driveDueWakesOnce()
+  assert.equal(life2.getWake(wake.id).status, 'executed')
+  assert.equal(second.agents.get(SESSION_A)?.followups.length ?? 0, 0)
+})
+
+test('H29 missing history capability keeps unresolved wakes and degrades health', async () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const first = fakeHost({ flush: async () => false })
+  apply(first.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life1 = first.provided.get('life')
+  seedDue(life1, clock)
+  await life1.driveDueWakesOnce()
+  const wake = life1.listWakes()[0]
+  first.disposers.forEach((dispose) => dispose())
+
+  const second = fakeHost()
+  second.ctx.get = () => undefined
+  second.ctx.inject = (_names, callback) => callback({
+    sessionController: second.ctx.sessionController,
+    sessions: second.ctx.sessions,
+    on: second.ctx.on.bind(second.ctx),
+  })
+  apply(second.ctx, {
+    databasePath, clock: clock.now, tickIntervalMs: 0,
+    wakeDelivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 },
+  })
+  const life2 = second.provided.get('life')
+  await life2.driveDueWakesOnce()
+  assert.equal(life2.getWake(wake.id).status, 'uncertain')
+  const health = life2.getHealth()
+  assert.equal(health.delivery.state, 'degraded')
+  assert.equal(health.delivery.reconciliation, 'unavailable')
+  assert.equal(health.delivery.reason, 'reconciliation_unavailable')
+  assert.equal(second.agents.get(SESSION_A)?.followups.length ?? 0, 0)
 })
 
 test('H7 cancellation or local acknowledgement during resolve prevents delivery', async () => {
@@ -615,10 +932,10 @@ test('H16 delayed optional injection binds, withdraws, and rebinds without dupli
   assert.equal((await life.driveDueWakesOnce()).status, 'unavailable')
 
   injections[0].callback(makeScope())
-  assert.equal(life.getHealth().delivery.state, 'active')
+  assert.equal(life.getHealth().delivery.state, 'degraded')
   assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 1)
   effectDisposers[0]()
-  assert.equal(life.getHealth().delivery.state, 'active')
+  assert.equal(life.getHealth().delivery.state, 'degraded')
   seedDue(life, clock)
   await life.driveDueWakesOnce()
   assert.equal(host.agents.get(SESSION_A).followups.length, 1)
@@ -626,7 +943,7 @@ test('H16 delayed optional injection binds, withdraws, and rebinds without dupli
   effectDisposers[1]()
   assert.equal(life.getHealth().delivery.state, 'degraded')
   injections[0].callback(makeScope())
-  assert.equal(life.getHealth().delivery.state, 'active')
+  assert.equal(life.getHealth().delivery.state, 'degraded')
   assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 1)
 
   host.disposers.forEach((dispose) => dispose())
@@ -745,7 +1062,7 @@ test('H19 rebinding during resolve prevents the old Agent from delivering', asyn
   await started.promise
   scopeDisposers[0]()
   injections[0](makeScope())
-  assert.equal(life.getHealth().delivery.state, 'active')
+  assert.equal(life.getHealth().delivery.state, 'degraded')
   gate.resolve()
   await drive
   assert.equal(host.agents.get(SESSION_A)?.followups.length ?? 0, 0)

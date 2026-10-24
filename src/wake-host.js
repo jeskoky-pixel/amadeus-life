@@ -15,6 +15,9 @@ const WAKE_SOURCE_KIND = 'amadeus-life'
 const EXECUTION_CACHE_LIMIT = 500
 /** Bounded tail window for conservative durable-snapshot evidence scans. */
 export const SNAPSHOT_SCAN_LIMIT = 2000
+const HISTORY_PAGE_MESSAGES = 200
+const HISTORY_MAX_PAGES = 4
+const EVIDENCE_EVENT_LIMIT = 800
 
 /**
  * Short reference-only prompt for the model. Deliberately excludes the intent
@@ -88,6 +91,11 @@ export class WakeHost {
     this.missing = []
     this.bound = false
     this.bindingGeneration = 0
+    this.reconcileState = 'pending'
+    this.nextReconcileAt = 0
+    this.reconcileBackoffMs = 30_000
+    this.lastReconcileError = null
+    this.reconcileAbort = null
 
     this.timer = null
     this.listenerDisposer = null
@@ -108,18 +116,29 @@ export class WakeHost {
   /** @returns {Record<string, unknown>} trusted delivery health snapshot. */
   health() {
     const usable = this.missing.length === 0 && this.bound
-    const state = !this.enabled ? 'disabled' : usable ? 'active' : 'degraded'
+    const hasUnresolved = this.#hasUnresolvedWake()
+    let state = !this.enabled ? 'disabled' : usable ? 'active' : 'degraded'
+    let reason = !this.enabled
+      ? this.requested
+        ? 'no_allowed_sessions'
+        : 'not_enabled'
+      : this.missing.length > 0
+        ? 'missing_capability'
+        : !this.bound
+          ? 'awaiting_services'
+          : undefined
+    if (state === 'active' && hasUnresolved) {
+      state = 'degraded'
+      reason =
+        this.reconcileState === 'unavailable'
+          ? 'reconciliation_unavailable'
+          : this.reconcileState === 'done'
+            ? 'reconciliation_unresolved'
+            : 'reconciliation_pending'
+    }
     return {
       state,
-      reason: !this.enabled
-        ? this.requested
-          ? 'no_allowed_sessions'
-          : 'not_enabled'
-        : this.missing.length > 0
-          ? 'missing_capability'
-          : !this.bound
-            ? 'awaiting_services'
-            : undefined,
+      reason,
       enabled: this.enabled,
       bound: this.bound,
       allowedSessions: this.allowed.length,
@@ -127,9 +146,24 @@ export class WakeHost {
       maxPerDrive: this.maxPerDrive,
       timerActive: this.timer !== null,
       inFlight: this.running,
+      reconciliation: this.reconcileState,
+      unresolvedWakes: hasUnresolved,
+      lastReconcileError: this.lastReconcileError ?? undefined,
       missing: this.missing.length > 0 ? [...this.missing] : undefined,
       lastError: this.lastError ?? undefined,
     }
+  }
+
+  /** @returns {boolean} whether any allowlisted Session has an unreconciled wake. */
+  #hasUnresolvedWake() {
+    for (const sessionId of this.allowed) {
+      try {
+        if (this.core.hasUnreconciledWakeForSession(sessionId)) return true
+      } catch {
+        return false
+      }
+    }
+    return false
   }
 
   /**
@@ -172,6 +206,9 @@ export class WakeHost {
     }, this.intervalMs)
     this.timer?.unref?.()
     this.bound = true
+    this.reconcileState = 'pending'
+    this.nextReconcileAt = 0
+    this.lastReconcileError = null
     return generation
   }
 
@@ -198,6 +235,7 @@ export class WakeHost {
     this.flushSession = undefined
     this.listenerRegistrar = undefined
     this.missing = []
+    this.reconcileState = 'unavailable'
   }
 
   /**
@@ -214,6 +252,8 @@ export class WakeHost {
   stop() {
     if (this.disposed) return
     this.disposed = true
+    this.reconcileAbort?.abort()
+    this.reconcileAbort = null
     this.unbindHost()
     this.watched.clear()
     this.seen.clear()
@@ -235,6 +275,7 @@ export class WakeHost {
     this.running = true
     const delivered = []
     try {
+      await this.reconcileUnreconciledWakes()
       this.core.tick()
       this.core.prepareDueWakes({
         limit: Math.min(100, Math.max(10, this.maxPerDrive * Math.max(1, this.allowed.length) * 2)),
@@ -300,9 +341,15 @@ export class WakeHost {
     }
 
     const agent = resolved.agent
+    const messageId = randomUUID()
+    try {
+      this.core.prepareWakeDelivery(wake.id, { ownerId: this.ownerId, messageId })
+    } catch {
+      return this.#uncertain(wake, 'could not persist prepared message id')
+    }
     const message = {
       role: 'user',
-      id: randomUUID(),
+      id: messageId,
       content: [{ type: 'text', text: wakePrompt(wake) }],
       source: { kind: WAKE_SOURCE_KIND, wakeId: wake.id },
     }
@@ -329,10 +376,13 @@ export class WakeHost {
       this.reconcileAlreadyCompleted(wake, message.id, agent.session)
       return { status: 'admitted', wakeId: wake.id, messageId: message.id, wakeStatus: admitted.status }
     } catch {
-      // A local acknowledgement may have superseded the wake; otherwise the
-      // durable message exists but the ledger cannot prove admission.
+      // A local acknowledgement, cancellation, or pre-admission completion may
+      // have moved the wake; never turn a proven completion into uncertain.
       try {
         const current = this.core.getWake(wake.id)
+        if (current.status === 'executed' || current.status === 'admitted') {
+          return { status: 'admitted', wakeId: wake.id, messageId, wakeStatus: current.status }
+        }
         if (current.status === 'claimed') {
           this.core.markWakeUncertain(wake.id, {
             ownerId: this.ownerId,
@@ -392,37 +442,83 @@ export class WakeHost {
         const messageId = data?.id
         const wakeId = source?.wakeId
         if (typeof messageId !== 'string' || typeof wakeId !== 'string') return
+        let wake
+        try {
+          wake = this.core.getWake(wakeId)
+        } catch {
+          return
+        }
+        if (wake.targetSessionId !== sessionId) return
+        if (wake.messageId !== messageId && wake.preparedMessageId !== messageId) return
         const watched = this.watched.get(messageId)
         if (watched !== undefined && (watched.sessionId !== sessionId || watched.wakeId !== wakeId)) return
         const turn = this.currentTurn.get(sessionId) ?? null
-        if (watched !== undefined && turn !== null) {
-          this.consumed.set(sessionId, { messageId, wakeId, turn })
+        const userSeq = Number(event.seq)
+        // Fix validity at the real event time, before any same-turn cancellation.
+        if (turn !== null && Number.isInteger(userSeq) && userSeq >= 1) {
+          try {
+            this.core.recordWakeConsumed(wakeId, {
+              targetSessionId: sessionId,
+              messageId,
+              turnSeq: turn,
+              userMessageSeq: userSeq,
+            })
+          } catch {
+            // Stale/conflicting evidence stays unreconciled; never guessed valid.
+          }
         }
-        this.seen.set(messageId, { sessionId, wakeId, turn, completed: false })
+        this.seen.set(messageId, {
+          sessionId,
+          wakeId,
+          messageId,
+          turn,
+          userMessageSeq: userSeq,
+          completed: false,
+          turnEndSeq: null,
+          turnReason: null,
+        })
         pruneMap(this.seen)
         return
       }
       if (event.type === 'turn/end') {
         const turn = Number(event.data?.turn)
-        const reason = event.data?.reason
-        const consumed = this.consumed.get(sessionId)
-        if (consumed !== undefined && consumed.turn === turn) {
-          if (reason?.kind === 'completed') {
-            this.complete(consumed.wakeId, consumed.messageId, turn, sessionId)
-          }
-          this.consumed.delete(sessionId)
-        }
-        for (const [messageId, entry] of this.seen) {
-          if (entry.sessionId !== sessionId || entry.turn !== turn) continue
-          if (reason?.kind === 'completed') {
-            entry.completed = true
-            if (this.watched.has(messageId)) this.complete(entry.wakeId, messageId, turn, sessionId)
-          }
+        const reason = event.data?.reason?.kind ?? 'unknown'
+        const turnEndSeq = Number(event.seq)
+        if (!Number.isInteger(turnEndSeq) || turnEndSeq < 1) return
+        for (const entry of this.seen.values()) {
+          if (entry.sessionId !== sessionId || entry.turn !== turn || entry.turnEndSeq !== null) continue
+          this.#recordTurnEnd(entry, sessionId, turn, turnEndSeq, String(reason))
+          entry.completed = reason === 'completed'
+          entry.turnEndSeq = turnEndSeq
+          entry.turnReason = String(reason)
         }
         if (this.currentTurn.get(sessionId) === turn) this.currentTurn.delete(sessionId)
       }
     } catch {
       // Event observation must never break the Host.
+    }
+  }
+
+  /**
+   * Record turn-end evidence through the v4 core; never fall back to guessing.
+   * @param {Record<string, unknown>} entry - observed message entry.
+   * @param {string} sessionId - target Session.
+   * @param {number} turn - turn number.
+   * @param {number} turnEndSeq - durable turn/end seq.
+   * @param {string} reason - turn end reason kind.
+   */
+  #recordTurnEnd(entry, sessionId, turn, turnEndSeq, reason) {
+    try {
+      this.core.recordWakeTurnEnd(entry.wakeId, {
+        targetSessionId: sessionId,
+        messageId: entry.messageId,
+        turnSeq: turn,
+        turnEndSeq,
+        reason,
+      })
+      this.watched.delete(entry.messageId)
+    } catch {
+      // Conservative: leave the wake unreconciled for later evidence.
     }
   }
 
@@ -437,9 +533,10 @@ export class WakeHost {
       seen?.completed === true &&
       seen.sessionId === wake.targetSessionId &&
       seen.wakeId === wake.id &&
-      Number.isInteger(seen.turn)
+      Number.isInteger(seen.turn) &&
+      Number.isInteger(seen.turnEndSeq)
     ) {
-      this.complete(wake.id, messageId, seen.turn, seen.sessionId)
+      this.#recordTurnEnd(seen, seen.sessionId, seen.turn, seen.turnEndSeq, seen.turnReason ?? 'completed')
       return
     }
     this.scanSnapshot(wake, messageId, session)
@@ -462,12 +559,40 @@ export class WakeHost {
       return
     }
     if (!Array.isArray(events)) return
-    // Bounded tail window: a very long Session cannot force an unbounded scan.
-    // If the matching message fell outside the window, execution is not
-    // guessed; it stays admitted for later evidence-based reconciliation.
+    const found = this.#scanEventsForWake(events, wake.id, messageId)
+    if (found === null) return
+    try {
+      this.core.recordWakeConsumedFromSnapshot(wake.id, {
+        targetSessionId: wake.targetSessionId,
+        messageId,
+        turnSeq: found.turn,
+        userMessageSeq: found.userSeq,
+      })
+      this.core.recordWakeTurnEnd(wake.id, {
+        targetSessionId: wake.targetSessionId,
+        messageId,
+        turnSeq: found.turn,
+        turnEndSeq: found.endSeq,
+        reason: found.reason,
+      })
+    } catch {
+      // Leave unreconciled; never guess.
+    }
+  }
+
+  /**
+   * Find one exact wake message inside an open turn and its same-turn end.
+   * Bounded to SNAPSHOT_SCAN_LIMIT. Requires exactly one matching message.
+   * @param {unknown[]} events - durable Session events.
+   * @param {string} wakeId - ledger wake id.
+   * @param {string} messageId - persistent message id.
+   * @returns {{turn: number, userSeq: number, endSeq: number, reason: string} | null} evidence.
+   */
+  #scanEventsForWake(events, wakeId, messageId) {
     const window = events.length > SNAPSHOT_SCAN_LIMIT ? events.slice(-SNAPSHOT_SCAN_LIMIT) : events
     let openTurn = null
-    let messageIndex = -1
+    let match = null
+    let matches = 0
     for (let index = 0; index < window.length; index += 1) {
       const event = window[index]
       if (event?.type === 'turn/start') openTurn = Number(event.data?.turn)
@@ -476,47 +601,190 @@ export class WakeHost {
       } else if (event?.type === 'user/message') {
         const data = event.data
         if (
-          data?.id === messageId &&
-          data?.source?.kind === WAKE_SOURCE_KIND &&
-          data.source.wakeId === wake.id
+          data?.id !== messageId ||
+          data?.source?.kind !== WAKE_SOURCE_KIND ||
+          data.source.wakeId !== wakeId
         ) {
-          if (openTurn === null) return
-          messageIndex = index
-          break
+          continue
         }
+        matches += 1
+        if (matches > 1 || openTurn === null) return null
+        match = { index, turn: openTurn, userSeq: Number(event.seq) }
       }
     }
-    if (messageIndex < 0 || openTurn === null) return
-    const turn = openTurn
-    for (let index = messageIndex + 1; index < window.length; index += 1) {
+    if (match === null || !Number.isInteger(match.turn) || !Number.isInteger(match.userSeq)) return null
+    for (let index = match.index + 1; index < window.length; index += 1) {
       const event = window[index]
-      if (event?.type === 'turn/start' && Number(event.data?.turn) !== turn) return
-      if (event?.type === 'turn/end' && Number(event.data?.turn) === turn) {
-        if (event.data?.reason?.kind === 'completed') {
-          this.complete(wake.id, messageId, turn, wake.targetSessionId)
+      if (event?.type === 'turn/start' && Number(event.data?.turn) !== match.turn) return null
+      if (event?.type === 'turn/end' && Number(event.data?.turn) === match.turn) {
+        const endSeq = Number(event.seq)
+        if (!Number.isInteger(endSeq)) return null
+        return {
+          turn: match.turn,
+          userSeq: match.userSeq,
+          endSeq,
+          reason: event.data?.reason?.kind ?? 'unknown',
         }
-        return
       }
     }
+    return null
   }
 
-  /** @param {string} wakeId @param {string} messageId @param {number} turn @param {string} sessionId */
-  complete(wakeId, messageId, turn, sessionId) {
-    if (this.disposed) return
+  /**
+   * Read bounded durable Session history through the official Host history API:
+   * `projections()` supplies the exact `asOfSeq`, `page()` supplies chronological
+   * `{type:'event', event}` records. No cold Agent resolution and no invented
+   * `inspect` method.
+   * @param {string} sessionId - target DSH Session.
+   * @returns {Promise<{events: unknown[] | null, complete: boolean}>} bounded history.
+   */
+  async #readSessionEvents(sessionId, signal) {
+    const controller = this.sessionController
+    let projection
     try {
-      const wake = this.core.getWake(wakeId)
-      if (
-        wake.status !== 'admitted' ||
-        wake.messageId !== messageId ||
-        wake.targetSessionId !== sessionId
-      ) {
-        return
-      }
-      this.core.markWakeExecuted(wakeId, { messageId, turnSeq: turn })
-      this.watched.delete(messageId)
-      this.seen.delete(messageId)
+      projection = await controller.projections({ sessionId }, signal)
     } catch {
-      // Stale or closed: execution is never guessed.
+      return { events: null, complete: false }
+    }
+    if (
+      projection === null ||
+      typeof projection !== 'object' ||
+      projection.kind !== 'sequenced' ||
+      !Number.isInteger(Number(projection.asOfSeq))
+    ) {
+      return { events: null, complete: false }
+    }
+    const throughSeq = Number(projection.asOfSeq)
+    let beforeSeq
+    let events = []
+    let complete = false
+    for (let pageIndex = 0; pageIndex < HISTORY_MAX_PAGES; pageIndex += 1) {
+      const request = {
+        address: { kind: 'session', sessionId },
+        throughSeq,
+        maxMessages: HISTORY_PAGE_MESSAGES,
+        turnWindow: { minMessages: 1, minTurns: 1 },
+      }
+      if (beforeSeq !== undefined) request.beforeSeq = beforeSeq
+      let response
+      try {
+        response = await controller.page(request, signal)
+      } catch {
+        return { events, complete: false }
+      }
+      const records = Array.isArray(response?.records) ? response.records : []
+      const pageEvents = []
+      for (const record of records) {
+        if (record?.type === 'event' && record.event && typeof record.event.type === 'string') {
+          pageEvents.push(record.event)
+        }
+      }
+      events = [...pageEvents, ...events]
+      if (response?.hasMore !== true) {
+        complete = true
+        break
+      }
+      const firstSeq = pageEvents.length > 0 ? Number(pageEvents[0].seq) : NaN
+      if (!Number.isInteger(firstSeq)) return { events, complete: false }
+      beforeSeq = firstSeq
+    }
+    if (events.length > EVIDENCE_EVENT_LIMIT) {
+      events = events.slice(-EVIDENCE_EVENT_LIMIT)
+      complete = false
+    }
+    return { events, complete }
+  }
+
+  /**
+   * Restart reconciliation using the real Host history API. A wake is cleared
+   * only with exact target Session + persistent message id + source wakeId +
+   * same-turn start/message/end evidence. Failures retry with bounded backoff;
+   * unresolved/pending evidence never reports overall delivery as active.
+   * @returns {Promise<Record<string, unknown>>} reconciliation outcome.
+   */
+  async reconcileUnreconciledWakes() {
+    if (this.disposed || !this.bound) {
+      this.reconcileState = 'unavailable'
+      return { status: 'unavailable', reason: 'not_bound' }
+    }
+    const canRead =
+      typeof this.sessionController?.projections === 'function' &&
+      typeof this.sessionController?.page === 'function'
+    if (!canRead) {
+      this.reconcileState = 'unavailable'
+      this.lastReconcileError = 'history_capability_missing'
+      return { status: 'unavailable', reason: 'history_capability_missing' }
+    }
+    const now = this.clock()
+    if (now < this.nextReconcileAt) return { status: 'throttled', retryAt: this.nextReconcileAt }
+    this.reconcileState = 'running'
+    const abort = new AbortController()
+    this.reconcileAbort = abort
+    let examined = 0
+    let executed = 0
+    let incomplete = false
+    try {
+      for (const sessionId of this.allowed) {
+        let wakes
+        try {
+          wakes = this.core.listUnreconciledWakesForSession(sessionId, { limit: 20 })
+        } catch {
+          incomplete = true
+          continue
+        }
+        if (wakes.length === 0) continue
+        const history = await this.#readSessionEvents(sessionId, abort.signal)
+        if (this.disposed) return { status: 'disposed', examined, executed }
+        if (history.events === null) {
+          incomplete = true
+          continue
+        }
+        if (history.complete !== true) incomplete = true
+        for (const wake of wakes) {
+          if (this.disposed) return { status: 'disposed', examined, executed }
+          const messageId = wake.messageId ?? wake.preparedMessageId
+          if (typeof messageId !== 'string') continue
+          const found = this.#scanEventsForWake(history.events, wake.id, messageId)
+          if (found === null) continue
+          examined += 1
+          try {
+            this.core.recordWakeConsumedFromSnapshot(wake.id, {
+              targetSessionId: sessionId,
+              messageId,
+              turnSeq: found.turn,
+              userMessageSeq: found.userSeq,
+            })
+            this.core.recordWakeTurnEnd(wake.id, {
+              targetSessionId: sessionId,
+              messageId,
+              turnSeq: found.turn,
+              turnEndSeq: found.endSeq,
+              reason: found.reason,
+            })
+            if (found.reason === 'completed') executed += 1
+          } catch {
+            // Keep unreconciled; never guess.
+          }
+        }
+      }
+      this.reconcileState = incomplete ? 'partial' : 'done'
+      this.lastReconcileError = incomplete ? 'history_window_incomplete' : null
+      if (incomplete) {
+        this.nextReconcileAt = this.clock() + this.reconcileBackoffMs
+        this.reconcileBackoffMs = Math.min(this.reconcileBackoffMs * 2, 300_000)
+      } else {
+        this.reconcileBackoffMs = 30_000
+        this.nextReconcileAt = this.clock() + this.intervalMs
+      }
+      return { status: 'ok', examined, executed, incomplete }
+    } catch (error) {
+      this.reconcileState = 'degraded'
+      this.lastReconcileError = messageOf(error)
+      this.nextReconcileAt = this.clock() + this.reconcileBackoffMs
+      this.reconcileBackoffMs = Math.min(this.reconcileBackoffMs * 2, 300_000)
+      return { status: 'error', error: this.lastReconcileError, examined, executed }
+    } finally {
+      if (this.reconcileAbort === abort) this.reconcileAbort = null
     }
   }
 }

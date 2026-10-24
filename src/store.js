@@ -17,7 +17,8 @@ import { LifeClosedError, LifeStorageError, LIFE_SCHEMA_VERSION } from './model.
 
 const V2_TABLES = ['meta', 'intents', 'intent_events', 'activities', 'runtime_leases']
 const V3_TABLES = [...V2_TABLES, 'wake_requests']
-const REQUIRED_TABLES = [...V3_TABLES, 'wake_consumption']
+const V4_TABLES = [...V3_TABLES, 'wake_consumption']
+const REQUIRED_TABLES = V4_TABLES
 
 const WAKE_TABLE_SQL = `
 CREATE TABLE wake_requests (
@@ -38,6 +39,8 @@ CREATE TABLE wake_requests (
   admitted_at TEXT,
   executed_at TEXT,
   executed_turn_seq INTEGER,
+  prepared_message_id TEXT,
+  prepared_at TEXT,
   last_error TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -55,6 +58,7 @@ CREATE TABLE wake_consumption (
   turn_seq INTEGER NOT NULL CHECK (turn_seq >= 1),
   user_message_seq INTEGER NOT NULL CHECK (user_message_seq >= 1),
   valid_at_consumption INTEGER NOT NULL CHECK (valid_at_consumption IN (0, 1)),
+  validity_known INTEGER NOT NULL DEFAULT 1 CHECK (validity_known IN (0, 1)),
   consumed_at TEXT NOT NULL,
   turn_end_seq INTEGER,
   turn_reason TEXT,
@@ -220,6 +224,13 @@ export class LifeStore {
     }
     if (version.value === LIFE_SCHEMA_VERSION) {
       this.#assertTables(db, REQUIRED_TABLES)
+      this.#assertColumns(db, 'wake_requests', ['prepared_message_id', 'prepared_at'])
+      this.#assertColumns(db, 'wake_consumption', ['validity_known'])
+      return
+    }
+    if (version.value === '4') {
+      this.#assertTables(db, V4_TABLES)
+      this.#migrateFromV4(db)
       return
     }
     if (version.value === '3') {
@@ -258,9 +269,28 @@ export class LifeStore {
   }
 
   /**
-   * Additive v2 -> v4 migration in one transaction (v3 wake table plus v4
-   * consumption evidence). Re-checks the version inside the write transaction;
-   * any failure rolls back and leaves the original v2 store untouched.
+   * @param {import('node:sqlite').DatabaseSync} db
+   * @param {string} table - table name.
+   * @param {readonly string[]} columns - required column names.
+   */
+  #assertColumns(db, table, columns) {
+    const found = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name))
+    for (const column of columns) {
+      if (!found.has(column)) {
+        throw new LifeStorageError(`Life store table "${table}" is missing required column "${column}"`, {
+          path: this.databasePath,
+          reason: 'missing_column',
+          table,
+          column,
+        })
+      }
+    }
+  }
+
+  /**
+   * Additive v2 -> v5 migration in one transaction (wake table plus v4/v5
+   * consumption evidence and prepared-message columns). Re-checks the version
+   * inside the write transaction; any failure rolls back to the original v2.
    * @param {import('node:sqlite').DatabaseSync} db - verified v2 connection.
    */
   #migrateFromV2(db) {
@@ -277,6 +307,8 @@ export class LifeStore {
         // Another opener completed the migration while this one waited.
         db.exec('COMMIT')
         this.#assertTables(db, REQUIRED_TABLES)
+        this.#assertColumns(db, 'wake_requests', ['prepared_message_id', 'prepared_at'])
+        this.#assertColumns(db, 'wake_consumption', ['validity_known'])
         return
       }
       if (current.value !== '2') {
@@ -297,7 +329,7 @@ export class LifeStore {
         // Preserve the migration failure.
       }
       if (error instanceof LifeStorageError) throw error
-      throw new LifeStorageError(`Life store v2 -> v4 migration failed: ${error.message}`, {
+      throw new LifeStorageError(`Life store v2 -> v5 migration failed: ${error.message}`, {
         path: this.databasePath,
         reason: 'migration_failed',
         cause: error.message,
@@ -306,8 +338,9 @@ export class LifeStore {
   }
 
   /**
-   * Additive v3 -> v4 migration: only the consumption evidence table/index.
-   * Re-checks the version inside the transaction; failure rolls back to v3.
+   * Additive v3 -> v5 migration: wake consumption table, prepared-message
+   * columns, validity-known column. Re-checks the version in the transaction;
+   * failure rolls back to v3.
    * @param {import('node:sqlite').DatabaseSync} db - verified v3 connection.
    */
   #migrateFromV3(db) {
@@ -323,6 +356,8 @@ export class LifeStore {
       if (current.value === LIFE_SCHEMA_VERSION) {
         db.exec('COMMIT')
         this.#assertTables(db, REQUIRED_TABLES)
+        this.#assertColumns(db, 'wake_requests', ['prepared_message_id', 'prepared_at'])
+        this.#assertColumns(db, 'wake_consumption', ['validity_known'])
         return
       }
       if (current.value !== '3') {
@@ -332,6 +367,10 @@ export class LifeStore {
         )
       }
       db.exec(WAKE_CONSUMPTION_SQL)
+      db.exec(
+        `ALTER TABLE wake_requests ADD COLUMN prepared_message_id TEXT;
+         ALTER TABLE wake_requests ADD COLUMN prepared_at TEXT;`,
+      )
       db.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(LIFE_SCHEMA_VERSION)
       db.exec('COMMIT')
       this.#assertTables(db, REQUIRED_TABLES)
@@ -342,7 +381,62 @@ export class LifeStore {
         // Preserve the migration failure.
       }
       if (error instanceof LifeStorageError) throw error
-      throw new LifeStorageError(`Life store v3 -> v4 migration failed: ${error.message}`, {
+      throw new LifeStorageError(`Life store v3 -> v5 migration failed: ${error.message}`, {
+        path: this.databasePath,
+        reason: 'migration_failed',
+        cause: error.message,
+      })
+    }
+  }
+
+  /**
+   * Additive v4 -> v5 migration: prepared-message columns and validity-known
+   * evidence. Re-checks the version inside the transaction; failure rolls back
+   * to v4 without touching existing rows.
+   * @param {import('node:sqlite').DatabaseSync} db - verified v4 connection.
+   */
+  #migrateFromV4(db) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
+      if (current === undefined) {
+        throw new LifeStorageError('Life store lost schema_version during migration; refusing to continue', {
+          path: this.databasePath,
+          reason: 'missing_schema_version',
+        })
+      }
+      if (current.value === LIFE_SCHEMA_VERSION) {
+        db.exec('COMMIT')
+        this.#assertTables(db, REQUIRED_TABLES)
+        this.#assertColumns(db, 'wake_requests', ['prepared_message_id', 'prepared_at'])
+        this.#assertColumns(db, 'wake_consumption', ['validity_known'])
+        return
+      }
+      if (current.value !== '4') {
+        throw new LifeStorageError(
+          `unsupported Life store schema version ${String(current.value)} during migration`,
+          { path: this.databasePath, reason: 'unsupported_schema', found: current.value },
+        )
+      }
+      db.exec(
+        `ALTER TABLE wake_requests ADD COLUMN prepared_message_id TEXT;
+         ALTER TABLE wake_requests ADD COLUMN prepared_at TEXT;`,
+      )
+      db.exec(
+        `ALTER TABLE wake_consumption
+         ADD COLUMN validity_known INTEGER NOT NULL DEFAULT 1 CHECK (validity_known IN (0, 1));`,
+      )
+      db.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(LIFE_SCHEMA_VERSION)
+      db.exec('COMMIT')
+      this.#assertTables(db, REQUIRED_TABLES)
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // Preserve the migration failure.
+      }
+      if (error instanceof LifeStorageError) throw error
+      throw new LifeStorageError(`Life store v4 -> v5 migration failed: ${error.message}`, {
         path: this.databasePath,
         reason: 'migration_failed',
         cause: error.message,

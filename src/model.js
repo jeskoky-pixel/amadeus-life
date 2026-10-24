@@ -77,7 +77,7 @@ export class LifeClosedError extends LifeError {
 }
 
 /** Schema version written into `meta.schema_version` by this build. */
-export const LIFE_SCHEMA_VERSION = '4'
+export const LIFE_SCHEMA_VERSION = '5'
 
 /** Allowed durable wake statuses. Claimed/admitted are never "executed". */
 export const WAKE_STATUSES = Object.freeze([

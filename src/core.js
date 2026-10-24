@@ -102,6 +102,8 @@ function wakeView(row) {
     admittedAt: row.admitted_at,
     executedAt: row.executed_at,
     executedTurnSeq: row.executed_turn_seq,
+    preparedMessageId: row.prepared_message_id,
+    preparedAt: row.prepared_at,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -121,6 +123,7 @@ function wakeConsumptionView(row) {
     turnSeq: row.turn_seq,
     userMessageSeq: row.user_message_seq,
     validAtConsumption: Number(row.valid_at_consumption),
+    validityKnown: Number(row.validity_known ?? 1),
     consumedAt: row.consumed_at,
     turnEndSeq: row.turn_end_seq,
     turnReason: row.turn_reason,
@@ -1315,6 +1318,48 @@ export class LifeCore {
   }
 
   /**
+   * Persist the exact planned message id before followup/flush, so a crash
+   * between durable delivery and ledger admission can still be reconciled from
+   * the official Session snapshot. Claimed + owner only.
+   * @param {string} id - wake id.
+   * @param {{ownerId: string, messageId: string}} options - owner and planned message id.
+   * @returns {Record<string, unknown>} wake view with prepared message id.
+   */
+  prepareWakeDelivery(id, { ownerId, messageId } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const owner = requireString(ownerId, 'ownerId', 200)
+    const message = requireString(messageId, 'messageId', 200)
+    return this.store.writeTransaction(() => {
+      const wake = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (wake === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (wake.status !== 'claimed') {
+        throw new LifeInvalidTransitionError(`wake in status "${String(wake.status)}" cannot prepare delivery`, {
+          wakeId,
+          status: wake.status,
+        })
+      }
+      if (wake.claim_owner !== owner) {
+        throw new LifeUnauthorizedError('wake is claimed by a different owner', { wakeId })
+      }
+      if (wake.prepared_message_id !== null && wake.prepared_message_id !== message) {
+        throw new LifeRevisionConflictError('a different prepared message id already exists', { wakeId })
+      }
+      this.store.run(
+        `UPDATE wake_requests SET prepared_message_id = ?, prepared_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'claimed' AND claim_owner = ?`,
+        message,
+        this.iso(),
+        this.iso(),
+        wakeId,
+        owner,
+      )
+      return this.#wakeView(wakeId)
+    })
+  }
+
+  /**
    * Record execution evidence for an admitted wake. Requires the admitted
    * message id and a still-active same-revision intent; a changed or cancelled
    * intent supersedes the wake instead of reporting execution.
@@ -1413,16 +1458,17 @@ export class LifeCore {
       if (wake.target_session_id !== target) {
         throw new LifeUnauthorizedError('wake target session does not match consumption evidence', { wakeId })
       }
-      if (!['admitted', 'superseded', 'uncertain'].includes(String(wake.status))) {
+      if (!['claimed', 'admitted', 'superseded', 'uncertain'].includes(String(wake.status))) {
         throw new LifeInvalidTransitionError(`wake in status "${String(wake.status)}" cannot record consumption`, {
           wakeId,
           status: wake.status,
         })
       }
-      if (wake.message_id !== message) {
-        throw new LifeValidationError('message id does not match the admitted wake', {
+      const messageMatches = wake.message_id === message || wake.prepared_message_id === message
+      if (!messageMatches) {
+        throw new LifeValidationError('message id does not match the prepared/admitted wake', {
           wakeId,
-          expectedMessageId: wake.message_id,
+          expectedMessageId: wake.message_id ?? wake.prepared_message_id,
           messageId: message,
         })
       }
@@ -1447,8 +1493,8 @@ export class LifeCore {
       this.store.run(
         `INSERT INTO wake_consumption
           (wake_id, target_session_id, message_id, turn_seq, user_message_seq,
-           valid_at_consumption, consumed_at, turn_end_seq, turn_reason, completed_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
+           valid_at_consumption, validity_known, consumed_at, turn_end_seq, turn_reason, completed_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, ?)`,
         wakeId,
         target,
         message,
@@ -1458,15 +1504,84 @@ export class LifeCore {
         now,
         now,
       )
-      if (valid === 0 && wake.status === 'admitted') {
+      if (valid === 0 && (wake.status === 'admitted' || wake.status === 'claimed')) {
         this.store.run(
           `UPDATE wake_requests SET status = 'superseded', last_error = ?, updated_at = ?
-           WHERE id = ? AND status = 'admitted'`,
+           WHERE id = ? AND status IN ('admitted', 'claimed')`,
           `invalid at consumption: ${String(invalidReason)}`,
           now,
           wakeId,
         )
       }
+      return this.#wakeConsumptionView(wakeId, message)
+    })
+  }
+
+  /**
+   * Record consumption discovered only after the fact (restart reconciliation).
+   * The exact intent validity at event time is unknowable, so evidence stays
+   * validity_known=0 and is never guessed valid. Session/message/turn
+   * coordinates are still mandatory and conflicts are rejected.
+   * @param {string} id - wake id.
+   * @param {{targetSessionId: string, messageId: string, turnSeq: number, userMessageSeq: number}} coordinates - snapshot coordinates.
+   * @returns {Record<string, unknown>} consumption evidence.
+   */
+  recordWakeConsumedFromSnapshot(id, { targetSessionId, messageId, turnSeq, userMessageSeq } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const target = requireString(targetSessionId, 'targetSessionId', 200)
+    if (!isDshSessionScope(`session:${target}`)) {
+      throw new LifeValidationError('targetSessionId must be a DSH session id')
+    }
+    const message = requireString(messageId, 'messageId', 200)
+    const turn = assertInteger(turnSeq, 'turnSeq', { min: 1 })
+    const userSeq = assertInteger(userMessageSeq, 'userMessageSeq', { min: 1 })
+    return this.store.writeTransaction(() => {
+      const wake = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (wake === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (wake.target_session_id !== target) {
+        throw new LifeUnauthorizedError('wake target session does not match snapshot evidence', { wakeId })
+      }
+      if (!['claimed', 'admitted', 'superseded', 'uncertain'].includes(String(wake.status))) {
+        throw new LifeInvalidTransitionError('wake status cannot record snapshot consumption', {
+          wakeId,
+          status: wake.status,
+        })
+      }
+      const messageMatches = wake.message_id === message || wake.prepared_message_id === message
+      if (!messageMatches) {
+        throw new LifeValidationError('snapshot message id does not match the wake', { wakeId })
+      }
+      const existing = this.store.get(
+        'SELECT * FROM wake_consumption WHERE wake_id = ? AND message_id = ?',
+        wakeId,
+        message,
+      )
+      if (existing !== undefined) {
+        if (
+          existing.target_session_id === target &&
+          Number(existing.turn_seq) === turn &&
+          Number(existing.user_message_seq) === userSeq
+        ) {
+          return wakeConsumptionView(existing)
+        }
+        throw new LifeRevisionConflictError('conflicting snapshot consumption evidence exists', { wakeId })
+      }
+      const now = this.iso()
+      this.store.run(
+        `INSERT INTO wake_consumption
+          (wake_id, target_session_id, message_id, turn_seq, user_message_seq,
+           valid_at_consumption, validity_known, consumed_at, turn_end_seq, turn_reason, completed_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, 0, ?, NULL, NULL, NULL, ?)`,
+        wakeId,
+        target,
+        message,
+        turn,
+        userSeq,
+        now,
+        now,
+      )
       return this.#wakeConsumptionView(wakeId, message)
     })
   }
@@ -1494,8 +1609,8 @@ export class LifeCore {
       if (wake.target_session_id !== target) {
         throw new LifeUnauthorizedError('wake target session does not match turn-end evidence', { wakeId })
       }
-      if (wake.message_id !== message) {
-        throw new LifeValidationError('message id does not match the admitted wake', { wakeId })
+      if (wake.message_id !== message && wake.prepared_message_id !== message) {
+        throw new LifeValidationError('message id does not match the prepared/admitted wake', { wakeId })
       }
       const evidence = this.store.get(
         'SELECT * FROM wake_consumption WHERE wake_id = ? AND message_id = ?',
@@ -1541,10 +1656,13 @@ export class LifeCore {
         message,
       )
       if (why === 'completed') {
-        if (Number(evidence.valid_at_consumption) === 1 && (wake.status === 'admitted' || wake.status === 'uncertain')) {
+        const knownValid = Number(evidence.valid_at_consumption) === 1
+        const unknownValidity = Number(evidence.validity_known ?? 1) === 0
+        const executableStatuses = ['claimed', 'admitted', 'uncertain', 'superseded']
+        if ((knownValid || unknownValidity) && executableStatuses.includes(String(wake.status))) {
           const result = this.store.run(
             `UPDATE wake_requests SET status = 'executed', executed_at = ?, executed_turn_seq = ?, updated_at = ?
-             WHERE id = ? AND status IN ('admitted', 'uncertain')`,
+             WHERE id = ? AND status IN ('claimed', 'admitted', 'uncertain', 'superseded')`,
             now,
             turn,
             now,
@@ -1553,7 +1671,7 @@ export class LifeCore {
           if (Number(result.changes) !== 1) {
             throw new LifeInvalidTransitionError('wake status changed during completed-turn evidence', { wakeId })
           }
-        } else if (wake.status === 'admitted' || wake.status === 'uncertain') {
+        } else if (['claimed', 'admitted', 'uncertain'].includes(String(wake.status))) {
           this.store.run(
             `UPDATE wake_requests SET status = 'superseded',
                last_error = 'turn completed without valid consumption evidence', updated_at = ?
@@ -1562,7 +1680,7 @@ export class LifeCore {
             wakeId,
           )
         }
-      } else if (wake.status === 'admitted' || wake.status === 'uncertain') {
+      } else if (['claimed', 'admitted', 'uncertain'].includes(String(wake.status))) {
         this.store.run(
           `UPDATE wake_requests SET status = 'uncertain', last_error = ?, updated_at = ?
            WHERE id = ?`,
@@ -1666,6 +1784,31 @@ export class LifeCore {
       `session:${target}`,
     )
     return row !== undefined
+  }
+
+  /**
+   * Bounded list of unreconciled wakes for one exact target Session. Used only
+   * by trusted Host reconciliation; not a model tool.
+   * @param {string} targetSessionId - DSH session id.
+   * @param {{limit?: number}} [options] - bounded count.
+   * @returns {Record<string, unknown>[]} wake views.
+   */
+  listUnreconciledWakesForSession(targetSessionId, { limit = 20 } = {}) {
+    this.#ensureOpen()
+    const target = requireString(targetSessionId, 'targetSessionId', 200)
+    if (!isDshSessionScope(`session:${target}`)) {
+      throw new LifeValidationError('targetSessionId must be a DSH session id')
+    }
+    const batch = assertInteger(limit, 'limit', { min: 1, max: 100 })
+    return this.store
+      .all(
+        `SELECT * FROM wake_requests
+         WHERE context_scope = ? AND status IN ('claimed', 'admitted', 'uncertain')
+         ORDER BY created_at ASC, id ASC LIMIT ?`,
+        `session:${target}`,
+        batch,
+      )
+      .map(wakeView)
   }
 
   /**

@@ -18,6 +18,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { LifeCore } from '../src/core.js'
 import { apply } from '../src/index.js'
 import { LifeUnauthorizedError, normalizeTimestamp } from '../src/model.js'
@@ -278,6 +279,76 @@ test('B5 conflicting reverse association is rejected without mutation', () => {
   }
 })
 
+test('B5 focused activity does not prevent additional activities for the same intent', () => {
+  const clock = makeClock()
+  const core = openCore(join(tempDir(), 'life.sqlite'), clock)
+  try {
+    const intent = createIntent(core, clock)
+    const first = core.recordActivity({ description: 'first step', ownerScope: SCOPE, intentId: intent.id })
+    const focused = core.updateIntent(intent.id, {
+      scope: SCOPE,
+      expectedRevision: intent.revision,
+      relatedActivityId: first.id,
+    })
+    const second = core.recordActivity({ description: 'second step', ownerScope: SCOPE, intentId: intent.id })
+    assert.equal(second.intentId, intent.id)
+    assert.equal(core.getIntent(intent.id, { scope: SCOPE }).relatedActivityId, first.id)
+    assert.equal(focused.relatedActivityId, first.id)
+    assert.equal(core.getIntent(intent.id, { scope: SCOPE }).revision, focused.revision)
+    assert.equal(core.listActivities({ scope: SCOPE }).length, 2)
+  } finally {
+    core.close()
+  }
+})
+
+test('B5 same-scope focus created before its intent remains a valid one-way link', () => {
+  const clock = makeClock()
+  const core = openCore(join(tempDir(), 'life.sqlite'), clock)
+  try {
+    const focus = core.recordActivity({ description: 'early local activity', ownerScope: SCOPE })
+    const intent = createIntent(core, clock, SCOPE, { relatedActivityId: focus.id })
+    const next = core.recordActivity({ description: 'follow-up activity', ownerScope: SCOPE, intentId: intent.id })
+    assert.equal(next.intentId, intent.id)
+    assert.equal(core.getIntent(intent.id, { scope: SCOPE }).relatedActivityId, focus.id)
+    assert.equal(core.getActivity(focus.id, { scope: SCOPE }).intentId, null)
+  } finally {
+    core.close()
+  }
+})
+
+test('B8 legacy bad focus is conservatively refused without partial writes', () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const core = openCore(databasePath, clock)
+  try {
+    const intent = createIntent(core, clock)
+    const foreign = core.recordActivity({ description: 'foreign work', ownerScope: 'session:foreign' })
+    const otherIntent = createIntent(core, clock)
+    const bound = core.recordActivity({ description: 'other intent work', ownerScope: SCOPE, intentId: otherIntent.id })
+    const raw = new DatabaseSync(databasePath)
+    try {
+      const setFocus = raw.prepare('UPDATE intents SET related_activity_id = ?, revision = revision + 1 WHERE id = ?')
+      for (const badFocus of ['activity_missing', foreign.id, bound.id]) {
+        setFocus.run(badFocus, intent.id)
+        const before = core.getIntent(intent.id, { scope: SCOPE })
+        assert.throws(
+          () => core.recordActivity({ description: 'second step', ownerScope: SCOPE, intentId: intent.id }),
+          (error) => typeof error?.code === 'string' && error.code.startsWith('LIFE_'),
+        )
+        const after = core.getIntent(intent.id, { scope: SCOPE })
+        assert.equal(after.revision, before.revision)
+        assert.equal(after.relatedActivityId, badFocus)
+        assert.equal(core.listActivities({ scope: SCOPE }).length, 1)
+      }
+    } finally {
+      raw.close()
+    }
+  } finally {
+    core.close()
+  }
+})
+
 test('B6 linking a cancelled intent fails explicitly and does not leak across scopes', () => {
   const clock = makeClock()
   const core = openCore(join(tempDir(), 'life.sqlite'), clock)
@@ -291,6 +362,70 @@ test('B6 linking a cancelled intent fails explicitly and does not leak across sc
     // A cancelled intent in one scope must not block plain work in another.
     const other = core.recordActivity({ description: 'own work', ownerScope: 'session:other' })
     assert.equal(core.getActivity(other.id, { scope: 'session:other' }).status, 'pending')
+  } finally {
+    core.close()
+  }
+})
+
+test('B7 legacy cross-scope/missing links are conservatively rejected and not rewritten', () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const core = openCore(databasePath, clock)
+  try {
+    const foreign = createIntent(core, clock, 'session:foreign')
+    core.cancelIntent(foreign.id, { scope: 'session:foreign', expectedRevision: 1 })
+    const activity = runningActivity(core)
+    const raw = new DatabaseSync(databasePath)
+    try {
+      raw.exec(`UPDATE activities SET intent_id = '${foreign.id}' WHERE id = '${activity.id}'`)
+    } finally {
+      raw.close()
+    }
+    // A foreign-scope link must not let another scope's cancellation affect
+    // this activity; the dangerous completion is refused conservatively.
+    assert.throws(
+      () =>
+        core.transitionActivity(activity.id, {
+          scope: SCOPE,
+          expectedRevision: activity.revision,
+          to: 'completed',
+          evidenceRefs: ['provider:receipt:legacy'],
+          trustedEvidence: true,
+        }),
+      isLifeCode('LIFE_UNAUTHORIZED'),
+    )
+    const afterForeign = core.getActivity(activity.id, { scope: SCOPE })
+    assert.equal(afterForeign.status, 'running')
+    assert.equal(afterForeign.revision, activity.revision)
+    const persisted = new DatabaseSync(databasePath)
+    try {
+      assert.equal(
+        persisted.prepare('SELECT intent_id FROM activities WHERE id = ?').get(activity.id).intent_id,
+        foreign.id,
+      )
+    } finally {
+      persisted.close()
+    }
+
+    const rawMissing = new DatabaseSync(databasePath)
+    try {
+      rawMissing.exec(`UPDATE activities SET intent_id = 'intent_missing' WHERE id = '${activity.id}'`)
+    } finally {
+      rawMissing.close()
+    }
+    assert.throws(
+      () =>
+        core.transitionActivity(activity.id, {
+          scope: SCOPE,
+          expectedRevision: activity.revision,
+          to: 'completed',
+          evidenceRefs: ['provider:receipt:legacy'],
+          trustedEvidence: true,
+        }),
+      isLifeCode('LIFE_VALIDATION'),
+    )
+    assert.equal(core.getActivity(activity.id, { scope: SCOPE }).status, 'running')
   } finally {
     core.close()
   }

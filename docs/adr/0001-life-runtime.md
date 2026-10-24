@@ -48,20 +48,21 @@ The store uses the synchronous `node:sqlite` `DatabaseSync` API available on the
 - Intent/activity scope is **derived from the live tool execution context** (`exec.agent.session.id`) in the adapter. Model-supplied strings never set scope, ownership, or authorization.
 - Because raw `ctx.tools.register` does not enforce the JSON Schema (only `defineTool` adds argument validation), the adapter installs its own argument guard on every model-facing tool: unknown and reserved keys (`scope`, `ownerScope`, `contextScope`, `authorizationRef`, `trustedEvidence`) are rejected with `LIFE_VALIDATION`, and `life_intent_update` copies only explicitly allowlisted editable fields. Regression test invokes the registered `execute` with hostile extras and verifies the victim intent is unchanged.
 - Service callers must pass an explicit trusted scope. Reads/updates/cancels are owner-scoped; mismatches fail with `LIFE_UNAUTHORIZED`.
+- Related-object links are validated inside the same transaction as the write: missing activities/intents fail `LIFE_NOT_FOUND`, foreign-scope links fail `LIFE_UNAUTHORIZED`, conflicting reverse focus fails `LIFE_VALIDATION`, and a cancelled intent cannot receive a new activity. `relatedActivityId` is an optional single focus: an intent may own multiple activities, and adding another activity is allowed when the current focus exists, is in the same scope, and either has no owning intent yet (one-way focus created before its intent) or points back to the same intent; the focus and the intent revision are left unchanged. Legacy focus values that are missing, foreign-scope, or bound to another intent are refused conservatively without partial writes. Legacy bad links are never rewritten; completion of an activity whose linked intent is missing or foreign-scope is refused conservatively, while a same-scope cancelled intent keeps the stale-result rule.
 - `requestExternalAction` always refuses unless a trusted authorizer was injected at construction; this version ships without such an adapter, so protected external actions are impossible by default.
 
 ### 5. Activity lifecycle
 
 - Transition table: `pending → running|failed|cancelled`; `running → paused|stopping|failed|completed|unknown`; `paused → running|stopping|failed`; `stopping → cancelled|unknown`; `unknown → completed|failed|cancelled`; terminal states have no outgoing transition.
 - Cancelling a running or paused activity enters `stopping`. Cancelling a `pending` activity is a safe local pre-start record. `unknown` work stays `unknown` when cancellation is requested; it is never mapped to cancelled.
-- `stopping/unknown → cancelled` and `unknown → completed` require evidence **and** `trustedEvidence: true`, which only a trusted provider adapter may set. Model tool calls always pass `trustedEvidence: false`, and a `note` is never a substitute for evidence. A direct `stopping → cancelled` bypass is therefore rejected.
+- `stopping/unknown → cancelled` and `running/unknown → completed` require evidence **and** `trustedEvidence: true`, which only a trusted provider adapter may set. Model tool calls always pass `trustedEvidence: false`, and a `note` is never a substitute for evidence. A direct `stopping → cancelled` bypass is therefore rejected. Completion of work linked to a same-scope cancelled intent keeps `LIFE_STALE_RESULT` priority over the trust check.
 - `completed` requires at least one evidence reference. Deadlines, time passing, and status polling never imply completion.
 - A late completion for an activity linked to a cancelled intent is rejected with `LIFE_STALE_RESULT`; the activity and the intent remain unchanged.
 - On plugin start, activities left in `running`/`stopping` by the previous owner are marked `unknown` (revision bumped) so they require explicit reconciliation; they are never auto-completed or replayed.
 
 ### 6. Storage failure policy
 
-- A non-existent path initializes the schema and writes `schema_version = 1`.
+- A non-existent path initializes the schema and writes `schema_version = 2`.
 - An existing path is verified first (`PRAGMA integrity_check`, `meta.schema_version`, required tables). Any failure throws `LifeStorageError`; the file is never replaced by a new empty store.
 - At adapter startup a storage failure registers a `life` service whose `getHealth()` reports `state: 'unavailable'` and whose other methods fail closed with `LIFE_STORAGE`. The plugin does not crash the Host, and does not silently pretend state was loaded.
 - A failed tick marks health `degraded` with `lastTickError`; a later successful tick clears it.
@@ -74,5 +75,5 @@ The store uses the synchronous `node:sqlite` `DatabaseSync` API available on the
 - No trusted external provider is installed. `trustedEvidence: true` is a host-code capability, currently exercised only by tests; model tools can never set it.
 - The outbox is local-only. Consumers, if added later, must still dedupe by `eventId`, and must distinguish local acknowledgement from external completion.
 - Schedule/Jobs are intentionally not integrated; a later authorization adapter may request wakeups through a trusted gateway, not by writing prompts directly.
-- Not verified: actual DSH Desktop install/load/unload (Codex performs this after review), real Schedule/Jobs interaction, cross-process contention under load, and any external delivery.
+- Codex independently installed the reviewed bundle through the real Plugin Manager, verified the live `ctx.life` service and all 9 registered tools, disabled/re-enabled it, and hard-restarted the isolated Desktop with persistence intact. Not verified here: real Schedule/Jobs interaction, cross-process contention under load, automatic DSH wake, and any external delivery.
 - No license is granted by this document or the package; the repository license remains undecided.

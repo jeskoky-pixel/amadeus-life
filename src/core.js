@@ -209,22 +209,46 @@ export class LifeCore {
       updatedAt: createdAt,
       reviewAt: normalizeTimestamp(reviewAt, 'reviewAt'),
     }
-    this.store.run(
-      `INSERT INTO intents (id, revision, status, description, context_scope, authorization_ref,
-        related_activity_id, created_at, updated_at, review_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      intent.id,
-      intent.revision,
-      intent.status,
-      intent.description,
-      intent.contextScope,
-      intent.authorizationRef,
-      intent.relatedActivityId,
-      intent.createdAt,
-      intent.updatedAt,
-      intent.reviewAt,
-    )
-    return intent
+    return this.store.writeTransaction(() => {
+      if (intent.relatedActivityId !== null) {
+        const activity = this.store.get(
+          'SELECT id, owner_scope, intent_id FROM activities WHERE id = ?',
+          intent.relatedActivityId,
+        )
+        if (activity === undefined) {
+          throw new LifeNotFoundError(`related activity "${intent.relatedActivityId}" was not found`, {
+            relatedActivityId: intent.relatedActivityId,
+          })
+        }
+        if (activity.owner_scope !== intent.contextScope) {
+          throw new LifeUnauthorizedError('related activity belongs to a different scope', {
+            relatedActivityId: intent.relatedActivityId,
+          })
+        }
+        if (activity.intent_id !== null && activity.intent_id !== intent.id) {
+          throw new LifeValidationError('related activity is already linked to another intent', {
+            relatedActivityId: intent.relatedActivityId,
+            linkedIntentId: activity.intent_id,
+          })
+        }
+      }
+      this.store.run(
+        `INSERT INTO intents (id, revision, status, description, context_scope, authorization_ref,
+          related_activity_id, created_at, updated_at, review_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        intent.id,
+        intent.revision,
+        intent.status,
+        intent.description,
+        intent.contextScope,
+        intent.authorizationRef,
+        intent.relatedActivityId,
+        intent.createdAt,
+        intent.updatedAt,
+        intent.reviewAt,
+      )
+      return intent
+    })
   }
 
   /**
@@ -319,6 +343,28 @@ export class LifeCore {
           `intent "${intentId}" revision is ${String(row.revision)}, expected ${expectedRevision}`,
           { id: intentId, expectedRevision, actualRevision: row.revision },
         )
+      }
+      if (next.relatedActivityId !== undefined && next.relatedActivityId !== null) {
+        const activity = this.store.get(
+          'SELECT id, owner_scope, intent_id FROM activities WHERE id = ?',
+          next.relatedActivityId,
+        )
+        if (activity === undefined) {
+          throw new LifeNotFoundError(`related activity "${next.relatedActivityId}" was not found`, {
+            relatedActivityId: next.relatedActivityId,
+          })
+        }
+        if (activity.owner_scope !== row.context_scope) {
+          throw new LifeUnauthorizedError('related activity belongs to a different scope', {
+            relatedActivityId: next.relatedActivityId,
+          })
+        }
+        if (activity.intent_id !== null && activity.intent_id !== intentId) {
+          throw new LifeValidationError('related activity is already linked to another intent', {
+            relatedActivityId: next.relatedActivityId,
+            linkedIntentId: activity.intent_id,
+          })
+        }
       }
       const description = next.description ?? row.description
       const reviewAt = next.reviewAt ?? row.review_at
@@ -426,22 +472,65 @@ export class LifeCore {
       createdAt,
       updatedAt: createdAt,
     }
-    this.store.run(
-      `INSERT INTO activities (id, revision, status, description, provider_id, intent_id, owner_scope,
-        evidence_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      activity.id,
-      activity.revision,
-      activity.status,
-      activity.description,
-      activity.providerId,
-      activity.intentId,
-      activity.ownerScope,
-      '[]',
-      activity.createdAt,
-      activity.updatedAt,
-    )
-    return activity
+    return this.store.writeTransaction(() => {
+      if (activity.intentId !== null) {
+        const intent = this.store.get(
+          'SELECT id, status, context_scope, related_activity_id FROM intents WHERE id = ?',
+          activity.intentId,
+        )
+        if (intent === undefined) {
+          throw new LifeNotFoundError(`intent "${activity.intentId}" was not found`, { intentId: activity.intentId })
+        }
+        if (intent.context_scope !== activity.ownerScope) {
+          throw new LifeUnauthorizedError('intent belongs to a different scope', { intentId: activity.intentId })
+        }
+        if (intent.status === 'cancelled') {
+          throw new LifeInvalidTransitionError('cannot link a new activity to a cancelled intent', {
+            intentId: activity.intentId,
+          })
+        }
+        if (intent.related_activity_id !== null) {
+          const focus = this.store.get(
+            'SELECT id, owner_scope, intent_id FROM activities WHERE id = ?',
+            intent.related_activity_id,
+          )
+          if (focus === undefined) {
+            throw new LifeValidationError(
+              'intent focused activity no longer exists; refusing to add an activity to an inconsistent intent',
+              { intentId: activity.intentId, relatedActivityId: intent.related_activity_id },
+            )
+          }
+          if (focus.owner_scope !== intent.context_scope) {
+            throw new LifeUnauthorizedError(
+              'intent focused activity belongs to a different scope; refusing to add an activity',
+              { intentId: activity.intentId, relatedActivityId: intent.related_activity_id },
+            )
+          }
+          if (focus.intent_id !== null && focus.intent_id !== intent.id) {
+            throw new LifeValidationError(
+              'intent focused activity is bound to another intent; refusing to add an activity',
+              { intentId: activity.intentId, relatedActivityId: intent.related_activity_id },
+            )
+          }
+        }
+      }
+      this.store.run(
+        `INSERT INTO activities (id, revision, status, description, provider_id, intent_id, owner_scope,
+          evidence_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        activity.id,
+        activity.revision,
+        activity.status,
+        activity.description,
+        activity.providerId,
+        activity.intentId,
+        activity.ownerScope,
+        '[]',
+        activity.createdAt,
+        activity.updatedAt,
+      )
+      return activity
+    })
   }
 
   /**
@@ -517,26 +606,38 @@ export class LifeCore {
         )
       }
       assertActivityTransition(String(row.status), to)
-      const needsTrustedProviderEvidence =
-        (to === 'cancelled' && (row.status === 'stopping' || row.status === 'unknown')) ||
-        (to === 'completed' && row.status === 'unknown')
-      if (needsTrustedProviderEvidence && (evidence.length === 0 || trustedEvidence !== true)) {
-        throw new LifeUnauthorizedError(
-          'uncertain external work can only be completed or cancelled with evidence from a trusted provider boundary',
-          { id: activityId, from: row.status, to, evidenceProvided: evidence.length > 0, trustedEvidence },
-        )
-      }
-      if (to === 'completed' && evidence.length === 0) {
-        throw new LifeValidationError('completion requires at least one evidenceRef')
-      }
       if (to === 'completed' && row.intent_id !== null) {
-        const intent = this.store.get('SELECT status FROM intents WHERE id = ?', row.intent_id)
-        if (intent !== undefined && intent.status === 'cancelled') {
+        const intent = this.store.get('SELECT id, status, context_scope FROM intents WHERE id = ?', row.intent_id)
+        if (intent === undefined) {
+          throw new LifeValidationError('linked intent no longer exists; refusing a completion that cannot be reconciled', {
+            activityId,
+            intentId: row.intent_id,
+          })
+        }
+        if (intent.context_scope !== row.owner_scope) {
+          throw new LifeUnauthorizedError('linked intent belongs to a different scope; refusing completion', {
+            activityId,
+            intentId: row.intent_id,
+          })
+        }
+        if (intent.status === 'cancelled') {
           throw new LifeStaleResultError('late completion for a cancelled intent is rejected', {
             activityId,
             intentId: row.intent_id,
           })
         }
+      }
+      const needsTrustedProviderEvidence =
+        (to === 'cancelled' && (row.status === 'stopping' || row.status === 'unknown')) ||
+        (to === 'completed' && (row.status === 'running' || row.status === 'unknown'))
+      if (needsTrustedProviderEvidence && (evidence.length === 0 || trustedEvidence !== true)) {
+        throw new LifeUnauthorizedError(
+          'uncertain or external work can only be completed or cancelled with evidence from a trusted provider boundary',
+          { id: activityId, from: row.status, to, evidenceProvided: evidence.length > 0, trustedEvidence },
+        )
+      }
+      if (to === 'completed' && evidence.length === 0) {
+        throw new LifeValidationError('completion requires at least one evidenceRef')
       }
       const merged = [...new Set([...JSON.parse(String(row.evidence_json)), ...evidence])]
       const revision = Number(row.revision) + 1

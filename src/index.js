@@ -270,30 +270,6 @@ export function apply(ctx, config = {}) {
     for (const event of events) ctx.emit('life/reconsideration', event)
   }
 
-  const api = {
-    createIntent: (input) => core.createIntent(input),
-    getIntent: (id, options) => core.getIntent(id, options),
-    listIntents: (options) => core.listIntents(options),
-    updateIntent: (id, options) => core.updateIntent(id, options),
-    cancelIntent: (id, options) => core.cancelIntent(id, options),
-    recordActivity: (input) => core.recordActivity(input),
-    getActivity: (id, options) => core.getActivity(id, options),
-    listActivities: (options) => core.listActivities(options),
-    transitionActivity: (id, options) => core.transitionActivity(id, options),
-    requestCancelActivity: (id, options) => core.requestCancelActivity(id, options),
-    tickNow: () => {
-      const result = core.tick()
-      publish(result.produced)
-      return result
-    },
-    listOutbox: (options) => core.listOutbox(options),
-    acknowledgeEvent: (eventId, options) => core.acknowledgeEvent(eventId, options),
-    requestExternalAction: (input) => core.requestExternalAction(input),
-    getHealth: () => core.getHealth(),
-    getScopedHealth: (options) => core.getScopedHealth(options),
-    close: () => core.close(),
-  }
-
   /** @type {ReturnType<typeof setInterval> | null} */
   let timer = null
   let disposed = false
@@ -315,8 +291,34 @@ export function apply(ctx, config = {}) {
       // Store close is idempotent; preserve the first disposal outcome.
     }
   }
+
+  const api = {
+    createIntent: (input) => core.createIntent(input),
+    getIntent: (id, options) => core.getIntent(id, options),
+    listIntents: (options) => core.listIntents(options),
+    updateIntent: (id, options) => core.updateIntent(id, options),
+    cancelIntent: (id, options) => core.cancelIntent(id, options),
+    recordActivity: (input) => core.recordActivity(input),
+    getActivity: (id, options) => core.getActivity(id, options),
+    listActivities: (options) => core.listActivities(options),
+    transitionActivity: (id, options) => core.transitionActivity(id, options),
+    requestCancelActivity: (id, options) => core.requestCancelActivity(id, options),
+    tickNow: () => {
+      const result = core.tick()
+      publish(result.produced)
+      return result
+    },
+    listOutbox: (options) => core.listOutbox(options),
+    acknowledgeEvent: (eventId, options) => core.acknowledgeEvent(eventId, options),
+    requestExternalAction: (input) => core.requestExternalAction(input),
+    getHealth: () => core.getHealth(),
+    getScopedHealth: (options) => core.getScopedHealth(options),
+    close: () => dispose(),
+  }
+
   // Cleanup is registered before the service and tools are published so a
-  // setup failure cannot leak the lease, timer, or SQLite handle.
+  // setup failure cannot leak the lease, timer, or SQLite handle. Public
+  // `api.close()` and Host disposal share this exact idempotent path.
   ctx.effect(() => dispose)
 
   try {

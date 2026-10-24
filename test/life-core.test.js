@@ -429,7 +429,7 @@ test('transition table rejects invalid transitions and confirmation bypasses', (
     const running = core.transitionActivity(activity.id, { scope: SCOPE, expectedRevision: 1, to: 'running' })
     assert.throws(
       () => core.transitionActivity(activity.id, { scope: SCOPE, expectedRevision: running.revision, to: 'completed' }),
-      LifeValidationError,
+      LifeUnauthorizedError,
     )
 
     const stopping = core.requestCancelActivity(activity.id, { scope: SCOPE, expectedRevision: running.revision })

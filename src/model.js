@@ -113,23 +113,42 @@ export const ACTIVITY_TRANSITIONS = Object.freeze({
 /** Statuses from which no further transition is possible. */
 export const TERMINAL_ACTIVITY_STATUSES = Object.freeze(['completed', 'failed', 'cancelled'])
 
-const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+const ISO_UTC = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/
 
 /**
  * Validate and normalize an ISO-8601 UTC timestamp with millisecond precision.
+ * Rejects calendar/time rollovers such as 2026-02-30 or 24:00 instead of
+ * letting `Date.parse` silently normalize them.
  * @param {unknown} value - candidate value.
  * @param {string} field - field name for the error message.
  * @returns {string} canonical `toISOString()` form.
  */
 export function normalizeTimestamp(value, field) {
-  if (typeof value !== 'string' || !ISO_UTC.test(value)) {
+  const match = typeof value === 'string' ? ISO_UTC.exec(value) : null
+  if (match === null) {
     throw new LifeValidationError(`${field} must be an ISO-8601 UTC timestamp with millisecond precision`, { field })
   }
-  const parsed = Date.parse(value)
-  if (Number.isNaN(parsed)) {
-    throw new LifeValidationError(`${field} is not a valid timestamp`, { field })
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, msText] = match
+  const numbers = [yearText, monthText, dayText, hourText, minuteText, secondText, msText].map(Number)
+  const [year, month, day, hour, minute, second, millisecond] = numbers
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+    throw new LifeValidationError(`${field} is not a valid calendar timestamp`, { field })
   }
-  return new Date(parsed).toISOString()
+  const date = new Date(0)
+  date.setUTCFullYear(year, month - 1, day)
+  date.setUTCHours(hour, minute, second, millisecond)
+  const roundTrips =
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second &&
+    date.getUTCMilliseconds() === millisecond
+  if (!roundTrips) {
+    throw new LifeValidationError(`${field} is not a valid calendar timestamp`, { field })
+  }
+  return date.toISOString()
 }
 
 /**

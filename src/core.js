@@ -77,6 +77,7 @@ function activityView(row) {
     personaId: row.persona_id ?? null,
     sceneId: row.scene_id ?? null,
     priority: Number(row.priority ?? 0),
+    providerManaged: Number(row.provider_managed ?? 0) === 1,
     checkpointRef: row.checkpoint_ref ?? null,
     resourceLease: row.resource_lease ?? null,
     deadlineAt: row.deadline_at ?? null,
@@ -692,6 +693,22 @@ export class LifeCore {
         )
       }
       assertActivityTransition(String(row.status), to)
+      if (
+        Number(row.provider_managed ?? 0) === 1 &&
+        trustedEvidence !== true &&
+        !['unknown', 'stopping'].includes(to)
+      ) {
+        throw new LifeUnauthorizedError(
+          'Provider-managed activities can only change through a trusted Provider boundary',
+          { id: activityId, from: row.status, to },
+        )
+      }
+      if (Number(row.provider_managed ?? 0) === 1 && to === 'failed' && evidence.length === 0) {
+        throw new LifeUnauthorizedError(
+          'Provider-managed failure requires non-empty evidence from the trusted Provider boundary',
+          { id: activityId, from: row.status, to },
+        )
+      }
       if (to === 'completed' && row.intent_id !== null) {
         const intent = this.store.get('SELECT id, status, context_scope FROM intents WHERE id = ?', row.intent_id)
         if (intent === undefined) {

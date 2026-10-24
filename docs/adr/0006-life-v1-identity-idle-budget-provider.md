@@ -4,7 +4,7 @@
 - Date: 2026-10-25 (Asia/Shanghai).
 - Baseline: v5 Host wake evidence (`e971906`/113 tests) with the real `sessionController.projections/page` reconciliation from ADR 0005.
 - Scope: additive SQLite v7, trusted Host service plus opt-in model tools for the local virtual Provider and shared read. No platform send, no second Agent/model loop.
-- Schema note: ADR 0007 extends this tree to v8 (activity concurrency + paid-cost reservation); v2–v7 remain readable/migratable.
+- Schema note: ADR 0007 extends this tree to v8 (activity concurrency + paid-cost reservation) and ADR 0008 to v9 (final hardening + token reservations); v2–v8 remain readable/migratable.
 
 ## 1. Schema v7 (incremental)
 

@@ -6,7 +6,7 @@
  * model text can never select a persona, scene, session, budget, or provider.
  */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   LifeInvalidTransitionError,
   LifeNotFoundError,
@@ -161,6 +161,117 @@ export class LifeV1 {
 
   // Identity -----------------------------------------------------------------
   /**
+   * Explicit local bootstrap: one stable Persona, one private Scene per
+   * allowlisted Session, one binding per Session. Idempotent for the same
+   * config; refuses to rebind an existing different identity or overwrite a
+   * Scene. No Scene is shared.
+   * @param {{targetSessionIds: string[], personaName?: string}} input
+   * @returns {Record<string, unknown>} bootstrap result.
+   */
+  bootstrapLocalIdentity({ targetSessionIds, personaName = 'Amadeus' } = {}) {
+    if (!Array.isArray(targetSessionIds) || targetSessionIds.length === 0) {
+      throw new LifeValidationError('bootstrap requires at least one allowlisted Session')
+    }
+    const name = requireString(personaName, 'bootstrap.personaName', 200)
+    const targets = [...new Set(targetSessionIds.map((id) => requireString(id, 'Session id', 200)))]
+    for (const target of targets) {
+      if (!isDshSessionScope(`session:${target}`)) {
+        throw new LifeValidationError('bootstrap target must be a DSH Session id', { targetSessionId: target })
+      }
+    }
+    const personaId = 'life_bootstrap_persona'
+    const now = this.core.iso()
+    return this.store.writeTransaction(() => {
+      let createdPersona = false
+      let createdScenes = 0
+      let createdBindings = 0
+      const persona = this.store.get('SELECT * FROM personas WHERE id = ?', personaId)
+      if (persona === undefined) {
+        this.store.run(
+          'INSERT INTO personas (id, name, revision, created_at, updated_at) VALUES (?, ?, 1, ?, ?)',
+          personaId,
+          name,
+          now,
+          now,
+        )
+        createdPersona = true
+      } else if (persona.name !== name) {
+        throw new LifeUnauthorizedError(
+          'bootstrap Persona id already exists with a different name; refusing to overwrite history',
+          { personaId },
+        )
+      }
+      const sessions = []
+      for (const target of targets) {
+        const scope = `session:${target}`
+        const sceneId = `life_bootstrap_scene_${createHash('sha256').update(target).digest('hex').slice(0, 16)}`
+        const scene = this.store.get('SELECT * FROM scenes WHERE id = ?', sceneId)
+        if (scene === undefined) {
+          this.store.run(
+            `INSERT INTO scenes (id, persona_id, context_scope, privacy, revision, created_at, updated_at)
+             VALUES (?, ?, ?, 'private', 1, ?, ?)`,
+            sceneId,
+            personaId,
+            scope,
+            now,
+            now,
+          )
+          createdScenes += 1
+        } else if (
+          scene.persona_id !== personaId ||
+          scene.context_scope !== scope ||
+          scene.privacy !== 'private'
+        ) {
+          throw new LifeUnauthorizedError(
+            'bootstrap Scene id collides with a different private Scene; refusing to overwrite history',
+            { sceneId, targetSessionId: target },
+          )
+        }
+        const binding = this.store.get('SELECT * FROM session_bindings WHERE target_session_id = ?', target)
+        if (binding === undefined) {
+          this.store.run(
+            `INSERT INTO session_bindings
+              (target_session_id, persona_id, scene_id, principal_id, authorization_ref, active, revision, created_at, updated_at)
+             VALUES (?, ?, ?, 'life-bootstrap', 'life-bootstrap:local', 1, 1, ?, ?)`,
+            target,
+            personaId,
+            sceneId,
+            now,
+            now,
+          )
+          createdBindings += 1
+        } else if (binding.persona_id !== personaId || binding.scene_id !== sceneId) {
+          throw new LifeUnauthorizedError(
+            'Session already has a different Persona/Scene binding; bootstrap will not rebind history. Use a new Session or keep the existing binding.',
+            { targetSessionId: target, personaId: binding.persona_id, sceneId: binding.scene_id },
+          )
+        } else if (binding.active !== 1) {
+          throw new LifeUnauthorizedError(
+            'Session binding was revoked; bootstrap will not reactivate it. Use a new Session or an explicit trusted administrator decision.',
+            { targetSessionId: target },
+          )
+        }
+        const current = this.store.get('SELECT * FROM session_bindings WHERE target_session_id = ?', target)
+        sessions.push({
+          targetSessionId: target,
+          sceneId,
+          personaId,
+          bindingRevision: current.revision,
+          bindingActive: current.active === 1,
+        })
+      }
+      return {
+        enabled: true,
+        state: 'ready',
+        personaId,
+        personaName: name,
+        sessions,
+        created: { persona: createdPersona, scenes: createdScenes, bindings: createdBindings },
+      }
+    })
+  }
+
+  /**
    * @param {{id?: string, name: string}} input - persona.
    * @returns {Record<string, unknown>} persona view.
    */
@@ -282,11 +393,17 @@ export class LifeV1 {
           target, personaId, sceneId, principal, auth, now, now,
         )
       } else {
+        if (existing.persona_id !== personaId || existing.scene_id !== sceneId) {
+          throw new LifeUnauthorizedError(
+            'a DSH Session cannot switch Persona or Scene in place; use a new Session',
+            { targetSessionId: target },
+          )
+        }
         this.store.run(
-          `UPDATE session_bindings SET persona_id = ?, scene_id = ?, principal_id = ?, authorization_ref = ?,
+          `UPDATE session_bindings SET principal_id = ?, authorization_ref = ?,
              active = 1, revision = revision + 1, updated_at = ?
            WHERE target_session_id = ?`,
-          personaId, sceneId, principal, auth, now, target,
+          principal, auth, now, target,
         )
       }
       return this.getSessionBinding(target)
@@ -336,10 +453,9 @@ export class LifeV1 {
       )
       this.store.run(
         `UPDATE activities SET status = 'unknown', revision = revision + 1, updated_at = ?
-         WHERE (persona_id = ? OR owner_scope = ?)
+         WHERE owner_scope = ?
            AND status IN ('pending', 'running', 'paused', 'stopping')`,
         now,
-        binding.personaId,
         `session:${target}`,
       )
       return this.getSessionBinding(target)
@@ -500,6 +616,7 @@ export class LifeV1 {
       windowStart: row.window_start,
       wakeCalls: row.wake_calls,
       tokensUsed: row.tokens_used,
+      tokensReserved: row.tokens_reserved ?? 0,
       costUsed: row.cost_used,
       costReserved: row.cost_reserved ?? 0,
       revision: row.revision,
@@ -533,47 +650,128 @@ export class LifeV1 {
   }
 
   /**
-   * Atomically reserve one autonomous wake. Unknown budget scopes allow with
-   * `unconfigured: true`; exhausted scopes deny without mutating counters.
-   * @param {{scope: string, estimatedTokens?: number, cost?: number}} input - reservation.
-   * @returns {{allowed: boolean, reason?: string, unconfigured?: boolean}} result.
+   * Determine the effective budget scopes for a Session: its Session scope plus
+   * any configured Persona scope for the active binding and global scope.
+   * @param {string} sessionScope
+   * @returns {string[]} effective scopes.
    */
-  consumeWakeBudget({ scope, estimatedTokens = 0, cost = 0 } = {}) {
+  #effectiveTokenScopes(sessionScope) {
+    const scopes = []
+    if (this.store.get('SELECT 1 AS found FROM budget_scopes WHERE scope = ?', sessionScope) !== undefined) {
+      scopes.push(sessionScope)
+    }
+    if (String(sessionScope).startsWith('session:')) {
+      const target = String(sessionScope).slice('session:'.length)
+      const binding = this.store.get('SELECT * FROM session_bindings WHERE target_session_id = ?', target)
+      if (binding !== undefined && binding.active === 1) {
+        const personaScope = `persona:${binding.persona_id}`
+        if (this.store.get('SELECT 1 AS found FROM budget_scopes WHERE scope = ?', personaScope) !== undefined) {
+          scopes.push(personaScope)
+        }
+      }
+    }
+    if (this.store.get("SELECT 1 AS found FROM budget_scopes WHERE scope = 'global'") !== undefined) {
+      scopes.push('global')
+    }
+    return [...new Set(scopes)]
+  }
+
+  /**
+   * Atomically reserve one autonomous wake across Session/Persona/global
+   * budgets. Estimated tokens are held in `tokens_reserved` until official usage
+   * settles them; missing usage retains the reservation.
+   * @param {{scope: string, estimatedTokens?: number, cost?: number, wakeId?: string}} input
+   * @returns {{allowed: boolean, reason?: string, unconfigured?: boolean, reservationId?: string}} result.
+   */
+  consumeWakeBudget({ scope, estimatedTokens = 0, cost = 0, wakeId = null } = {}) {
     const key = requireString(scope, 'scope', 200)
     const tokens = assertInteger(estimatedTokens, 'estimatedTokens', { min: 0 })
     const costUnits = assertInteger(cost, 'cost', { min: 0 })
+    const wake = wakeId === null || wakeId === undefined ? null : requireString(wakeId, 'wakeId', 200)
     const nowMs = this.core.nowMs()
     const nowIso = this.core.iso(nowMs)
     return this.store.writeTransaction(() => {
-      const row = this.store.get('SELECT * FROM budget_scopes WHERE scope = ?', key)
-      if (row === undefined) return { allowed: true, unconfigured: true }
-      const startMs = Date.parse(row.window_start)
-      const inWindow = nowMs - startMs < Number(row.window_ms)
-      const wakeCalls = inWindow ? Number(row.wake_calls) : 0
-      const tokensUsed = inWindow ? Number(row.tokens_used) : 0
-      const costUsed = inWindow ? Number(row.cost_used) : 0
-      const windowStart = inWindow ? row.window_start : nowIso
-      if (row.wake_limit !== null && wakeCalls + 1 > Number(row.wake_limit)) {
-        return { allowed: false, reason: 'wake_limit' }
+      if (wake !== null) {
+        const existing = this.store.get('SELECT * FROM token_reservations WHERE wake_id = ?', wake)
+        if (existing !== undefined) {
+          if (existing.session_scope !== key || Number(existing.total_amount) !== tokens) {
+            throw new LifeValidationError('wake id is already reserved with different scope or amount', {
+              wakeId: wake,
+              reservationId: existing.id,
+            })
+          }
+          return {
+            allowed: true,
+            reservationId: existing.id,
+            idempotent: true,
+            scopes: this.store.all(
+              'SELECT scope FROM token_reservation_scopes WHERE reservation_id = ? ORDER BY scope',
+              existing.id,
+            ).map((row) => row.scope),
+          }
+        }
       }
-      if (row.token_limit !== null && tokensUsed + tokens > Number(row.token_limit)) {
-        return { allowed: false, reason: 'token_limit' }
+      const scopes = this.#effectiveTokenScopes(key)
+      if (scopes.length === 0) return { allowed: true, unconfigured: true }
+      const plans = []
+      for (const scopeKey of scopes) {
+        const row = this.store.get('SELECT * FROM budget_scopes WHERE scope = ?', scopeKey)
+        if (row === undefined) continue
+        const inWindow = nowMs - Date.parse(row.window_start) < Number(row.window_ms)
+        const wakeCalls = inWindow ? Number(row.wake_calls) : 0
+        const tokensUsed = inWindow ? Number(row.tokens_used) : 0
+        const costUsed = inWindow ? Number(row.cost_used) : 0
+        const tokensReserved = Number(row.tokens_reserved ?? 0)
+        const costReserved = Number(row.cost_reserved ?? 0)
+        const windowStart = inWindow ? row.window_start : nowIso
+        if (row.wake_limit !== null && wakeCalls + 1 > Number(row.wake_limit)) {
+          return { allowed: false, reason: 'wake_limit', scope: scopeKey }
+        }
+        if (row.token_limit !== null && tokensUsed + tokensReserved + tokens > Number(row.token_limit)) {
+          return { allowed: false, reason: 'token_limit', scope: scopeKey }
+        }
+        if (row.cost_limit !== null && costUsed + costReserved + costUnits > Number(row.cost_limit)) {
+          return { allowed: false, reason: 'cost_limit', scope: scopeKey }
+        }
+        plans.push({ scope: scopeKey, row, wakeCalls, tokensUsed, costUsed, windowStart })
       }
-      if (row.cost_limit !== null && costUsed + Number(row.cost_reserved ?? 0) + costUnits > Number(row.cost_limit)) {
-        return { allowed: false, reason: 'cost_limit' }
+      for (const plan of plans) {
+        this.store.run(
+          `UPDATE budget_scopes SET window_start = ?, wake_calls = ?, tokens_used = ?, cost_used = ?,
+             tokens_reserved = tokens_reserved + ?, revision = revision + 1, updated_at = ?
+           WHERE scope = ?`,
+          plan.windowStart,
+          plan.wakeCalls + 1,
+          plan.tokensUsed,
+          plan.costUsed + costUnits,
+          tokens,
+          nowIso,
+          plan.scope,
+        )
       }
+      const reservationId = `tokens_${randomUUID()}`
       this.store.run(
-        `UPDATE budget_scopes SET window_start = ?, wake_calls = ?, tokens_used = ?, cost_used = ?,
-           revision = revision + 1, updated_at = ?
-         WHERE scope = ?`,
-        windowStart,
-        wakeCalls + 1,
-        tokensUsed + tokens,
-        costUsed + costUnits,
-        nowIso,
+        `INSERT INTO token_reservations
+          (id, session_scope, wake_id, total_amount, status, settled_tokens, created_at, updated_at, revision)
+         VALUES (?, ?, ?, ?, 'reserved', NULL, ?, ?, 1)`,
+        reservationId,
         key,
+        wake,
+        tokens,
+        nowIso,
+        nowIso,
       )
-      return { allowed: true }
+      for (const plan of plans) {
+        this.store.run(
+          `INSERT INTO token_reservation_scopes
+            (reservation_id, scope, reserved_tokens, settled_tokens, status)
+           VALUES (?, ?, ?, NULL, 'reserved')`,
+          reservationId,
+          plan.scope,
+          tokens,
+        )
+      }
+      return { allowed: true, reservationId, scopes: plans.map((plan) => plan.scope) }
     })
   }
 
@@ -842,6 +1040,7 @@ export class LifeV1 {
           scope,
           expectedRevision: activity.revision,
           to: 'paused',
+          trustedEvidence: true,
           note: 'user turn priority',
         })
         let checkpointRef = view.checkpointRef
@@ -887,6 +1086,23 @@ export class LifeV1 {
   }
 
   /**
+   * Explicitly revoke one cross-scope Scene grant. Reads are uncached, so the
+   * next shared view immediately loses the scene's records.
+   * @param {{sceneId: string, dataScope: string}} input
+   * @returns {{revoked: boolean}} result.
+   */
+  revokeSceneShare({ sceneId, dataScope } = {}) {
+    const scene = this.getScene(sceneId)
+    const scope = requireString(dataScope, 'dataScope', 200)
+    const result = this.store.run(
+      'DELETE FROM scene_shares WHERE scene_id = ? AND data_scope = ?',
+      scene.id,
+      scope,
+    )
+    return { revoked: Number(result.changes) === 1 }
+  }
+
+  /**
    * Minimal read-only shared view derived from the caller's active binding.
    * Cross-scene records require an explicit shared scene + grant; private
    * descriptions and all authorization/principal fields are never returned.
@@ -916,42 +1132,54 @@ export class LifeV1 {
       const intents = this.store.all(
         `SELECT id, status, revision, updated_at, review_at, description
          FROM intents
-         WHERE scene_id = ? OR (context_scope = ? AND scene_id IS NULL)
+         WHERE scene_id = ?
          ORDER BY updated_at DESC, id ASC LIMIT 50`,
         scene.id,
-        scene.context_scope,
       )
       const activities = this.store.all(
         `SELECT id, status, revision, updated_at, description, priority, checkpoint_ref
          FROM activities
-         WHERE scene_id = ? OR (owner_scope = ? AND scene_id IS NULL)
+         WHERE scene_id = ?
          ORDER BY priority DESC, updated_at DESC, id ASC LIMIT 50`,
         scene.id,
-        scene.context_scope,
       )
       visible.push({
         id: scene.id,
-        personaId: scene.persona_id,
-        dataScope: scene.context_scope,
+        ...(own ? { personaId: scene.persona_id, dataScope: scene.context_scope } : {}),
         privacy: scene.privacy,
         owner: own,
-        intents: intents.map((row) => ({
-          id: row.id,
-          status: row.status,
-          revision: row.revision,
-          updatedAt: row.updated_at,
-          reviewAt: row.review_at,
-          description: own ? row.description : undefined,
-        })),
-        activities: activities.map((row) => ({
-          id: row.id,
-          status: row.status,
-          revision: row.revision,
-          updatedAt: row.updated_at,
-          priority: row.priority,
-          checkpointRef: row.checkpoint_ref,
-          description: own ? row.description : undefined,
-        })),
+        intents: intents.map((row) => (own
+          ? {
+              id: row.id,
+              status: row.status,
+              revision: row.revision,
+              updatedAt: row.updated_at,
+              reviewAt: row.review_at,
+              description: row.description,
+            }
+          : {
+              id: row.id,
+              status: row.status,
+              revision: row.revision,
+              updatedAt: row.updated_at,
+            })),
+        activities: activities.map((row) => (own
+          ? {
+              id: row.id,
+              status: row.status,
+              revision: row.revision,
+              updatedAt: row.updated_at,
+              priority: row.priority,
+              checkpointRef: row.checkpoint_ref,
+              description: row.description,
+            }
+          : {
+              id: row.id,
+              status: row.status,
+              revision: row.revision,
+              updatedAt: row.updated_at,
+              priority: row.priority,
+            })),
       })
     }
     return {
@@ -1041,7 +1269,7 @@ export class LifeV1 {
    * @param {{targetSessionId: string, seq: number, usage: {inputTokens?: number, outputTokens?: number, totalTokens?: number, cost?: number}}} input - usage.
    * @returns {Record<string, unknown>} accounting result.
    */
-  recordSessionUsage({ targetSessionId, seq, usage } = {}) {
+  recordSessionUsage({ targetSessionId, seq, usage, wakeId = null } = {}) {
     const target = requireString(targetSessionId, 'targetSessionId', 200)
     const sequence = assertInteger(seq, 'seq', { min: 1 })
     if (usage === null || typeof usage !== 'object') {
@@ -1053,7 +1281,10 @@ export class LifeV1 {
       ? inputTokens + outputTokens
       : assertInteger(usage.totalTokens, 'usage.totalTokens', { min: 0 })
     const cost = usage.cost === undefined ? 0 : assertInteger(usage.cost, 'usage.cost', { min: 0 })
+    const wake = wakeId === null || wakeId === undefined ? null : requireString(wakeId, 'wakeId', 200)
     const scope = `session:${target}`
+    const nowMs = this.core.nowMs()
+    const nowIso = this.core.iso(nowMs)
     return this.store.writeTransaction(() => {
       const result = this.store.run(
         `INSERT OR IGNORE INTO usage_events
@@ -1064,24 +1295,85 @@ export class LifeV1 {
         inputTokens,
         outputTokens,
         totalTokens,
-        this.core.iso(),
+        nowIso,
       )
       if (Number(result.changes) !== 1) {
         return { recorded: false, duplicate: true, totalTokens, scope }
       }
-      const budget = this.store.get('SELECT * FROM budget_scopes WHERE scope = ?', scope)
-      if (budget !== undefined) {
-        this.store.run(
-          `UPDATE budget_scopes SET tokens_used = tokens_used + ?, cost_used = cost_used + ?,
-             revision = revision + 1, updated_at = ?
-           WHERE scope = ?`,
-          totalTokens,
-          cost,
-          this.core.iso(),
+      const reservation = wake !== null
+        ? this.store.get(
+          "SELECT * FROM token_reservations WHERE wake_id = ? AND status = 'reserved' ORDER BY created_at DESC LIMIT 1",
+          wake,
+        )
+        : this.store.get(
+          "SELECT * FROM token_reservations WHERE session_scope = ? AND status = 'reserved' ORDER BY created_at ASC LIMIT 1",
           scope,
         )
+      if (reservation === undefined) {
+        // No reservation to settle (legacy/unconfigured). Record actual usage
+        // conservatively on every currently effective configured scope.
+        for (const scopeKey of this.#effectiveTokenScopes(scope)) {
+          const budget = this.store.get('SELECT * FROM budget_scopes WHERE scope = ?', scopeKey)
+          if (budget === undefined) continue
+          const inWindow = nowMs - Date.parse(budget.window_start) < Number(budget.window_ms)
+          const used = inWindow ? Number(budget.tokens_used) : 0
+          this.store.run(
+            `UPDATE budget_scopes SET window_start = ?, tokens_used = ?, cost_used = ?,
+               revision = revision + 1, updated_at = ?
+             WHERE scope = ?`,
+            inWindow ? budget.window_start : nowIso,
+            used + totalTokens,
+            Number(budget.cost_used) + (scopeKey === scope ? cost : 0),
+            nowIso,
+            scopeKey,
+          )
+        }
+        return { recorded: true, duplicate: false, totalTokens, scope, settled: null }
       }
-      return { recorded: true, duplicate: false, totalTokens, scope, budget: budget !== undefined }
+      const reservedScopes = this.store.all(
+        'SELECT * FROM token_reservation_scopes WHERE reservation_id = ? AND status = ?',
+        reservation.id,
+        'reserved',
+      )
+      for (const reserved of reservedScopes) {
+        const budget = this.store.get('SELECT * FROM budget_scopes WHERE scope = ?', reserved.scope)
+        if (budget === undefined) continue
+        const inWindow = nowMs - Date.parse(budget.window_start) < Number(budget.window_ms)
+        const used = inWindow ? Number(budget.tokens_used) : 0
+        this.store.run(
+          `UPDATE budget_scopes SET window_start = ?, tokens_used = ?,
+             tokens_reserved = MAX(0, tokens_reserved - ?), cost_used = cost_used + ?,
+             revision = revision + 1, updated_at = ?
+           WHERE scope = ?`,
+          inWindow ? budget.window_start : nowIso,
+          used + totalTokens,
+          Number(reserved.reserved_tokens),
+          reserved.scope === scope ? cost : 0,
+          nowIso,
+          reserved.scope,
+        )
+        this.store.run(
+          "UPDATE token_reservation_scopes SET status = 'settled', settled_tokens = ? WHERE reservation_id = ? AND scope = ?",
+          totalTokens,
+          reservation.id,
+          reserved.scope,
+        )
+      }
+      this.store.run(
+        `UPDATE token_reservations SET status = 'settled', settled_tokens = ?,
+           revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'reserved'`,
+        totalTokens,
+        nowIso,
+        reservation.id,
+      )
+      return {
+        recorded: true,
+        duplicate: false,
+        totalTokens,
+        scope,
+        settled: reservation.id,
+        scopes: reservedScopes.map((row) => row.scope),
+      }
     })
   }
 
@@ -1258,8 +1550,9 @@ export class LifeV1 {
         this.store.run(
           `INSERT INTO activities
             (id, revision, status, description, provider_id, intent_id, owner_scope, evidence_json,
-             created_at, updated_at, persona_id, scene_id, priority, checkpoint_ref, resource_lease, deadline_at)
-           VALUES (?, 1, 'pending', ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, NULL, ?, ?)`,
+             created_at, updated_at, persona_id, scene_id, priority, checkpoint_ref, resource_lease, deadline_at,
+             provider_managed)
+           VALUES (?, 1, 'pending', ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, NULL, ?, ?, 1)`,
           activityId,
           descriptionValue,
           providerId,
@@ -1351,7 +1644,12 @@ export class LifeV1 {
         return this.#markUnknownIfActive(activityId, scope)
       }
       if (result.status === 'paused') {
-        return this.core.transitionActivity(activityId, { scope, expectedRevision: activity.revision, to: 'paused' })
+        return this.core.transitionActivity(activityId, {
+          scope,
+          expectedRevision: activity.revision,
+          to: 'paused',
+          trustedEvidence: true,
+        })
       }
       throw new LifeInvalidTransitionError('provider did not pause the activity')
     }
@@ -1362,7 +1660,12 @@ export class LifeV1 {
         return this.#markUnknownIfActive(activityId, scope)
       }
       if (result.status === 'running') {
-        return this.core.transitionActivity(activityId, { scope, expectedRevision: activity.revision, to: 'running' })
+        return this.core.transitionActivity(activityId, {
+          scope,
+          expectedRevision: activity.revision,
+          to: 'running',
+          trustedEvidence: true,
+        })
       }
       throw new LifeInvalidTransitionError('provider did not resume the activity')
     }
@@ -1443,6 +1746,7 @@ export class LifeV1 {
           expectedRevision: activity.revision,
           to: 'failed',
           evidenceRefs: result.evidenceRefs ?? [],
+          trustedEvidence: true,
           note: 'provider reconciliation',
         })
       }

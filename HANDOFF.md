@@ -1,5 +1,12 @@
 # amadeus-life 交接
 
+## 最新检查点：Life v1 final hardening / SQLite v9（2026-10-25）
+
+- 同一 Creator 会话修复 Codex 五项最终回归：Session 撤销只影响本 Session 活动（同 Persona 的 A 保持 revision/lease/status）；Provider-managed 活动中央 transition 拒绝模型 failed/completed/cancel-confirm/pause/resume 并保留资源；Session Persona/Scene 禁止原地切换；共享视图使用跨场景字段 allowlist 并排除 legacy 无 scene 行；每 wake token 预留、官方 usage 幂等结算、Session/Persona/global 有效预算与 worker 竞争。
+- schema v9：v2–v8 增量迁移，新增 `provider_managed`、`tokens_reserved`、`token_reservations/token_reservation_scopes`；v6→v9、v7→v9、v8→v9 及失败回滚测试。确定性测试 161 项通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5）。
+- 新增离线单屏设置：`scripts/life-setup.mjs`（core/autonomous/activity，仅输出/写 JSON，不改 profile）与 `docs/SETUP.md`，默认自主投递和新工具关闭；autonomous/activity 预设含显式 `bootstrap`，首次加载创建稳定 Persona/private Scene/binding，重复加载幂等，冲突 fail closed；`--out` 仅 `wx` 新建文件。README/INSTALL/ADR 0008/十场景映射同步到 v9。
+- v8→v9 真实开发库冷备份迁移、隔离 DSH 生命周期、无输入唤醒与本地 Provider 活动、旧工具拒绝、预算拒绝、身份重绑拒绝、首次配置启动/重启均已通过；外部 Provider/付费未验收。Codex 标准 `node --test test/*.test.js` 为 161/161，`npm test` 十一组全通过。详见 [最终加固报告](docs/verification/FINAL_HARDENING_2026-10-25.md)。
+
 ## 最新检查点：Life v1.0 预算边界 / SQLite v8（2026-10-25）
 
 - 同一 Creator 会话补齐统一预算中的活动并发与付费预留：`budget_scopes.activity_limit` 在活动 INSERT 的同一 `BEGIN IMMEDIATE` 内检查 Session/Persona/global 有效上限；pending/running/paused/stopping/unknown 占名额，终态释放；模型工具与 trusted Host 共用检查，无 resource 不能绕过。
@@ -56,9 +63,9 @@
 
 ## 当前能做什么
 
-SQLite schema v2 保存意图与活动；支持 revision CAS、改期/取消、有界时钟 tick、持久复查 outbox、scope 隔离、部分可信证据检查（存在下述缺口）、单运行时 lease、明确存储错误与生命周期清理。
+SQLite schema v9 保存意图、活动、身份/绑定、idle、wake 证据、预算、usage 与受限 Provider 关系；支持 revision CAS、改期/取消、有界 tick、Host wake/idle（默认关闭）、统一预算、资源互斥和单运行时 lease。旧 v2–v8 库按增量迁移保留，不自动删除或替换。
 
-9 个模型工具已在真实 DSH 注册并调用。没有 QQ、Memory、State 或其他身体也能运行。到期只产生本地引用事件，不自动调用模型、唤醒会话或发送消息。
+默认仍为原 9 个模型工具；管理员显式启用后才增加受控本地活动工具与共享只读工具。没有 QQ、Memory、State 或其他身体也能运行；无平台发送、真实 Provider 或支付。
 
 ## 实际开发与验证
 

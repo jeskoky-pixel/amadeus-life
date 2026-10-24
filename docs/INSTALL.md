@@ -17,7 +17,7 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
 
 以上四种操作均在隔离真实 Desktop 测试过。检查结果中的 application 和错误；pnpm exit 0 不等于激活成功。安装需要经过认证的管理员连接；普通 Workspace Write Agent 不因此获得配置管理或 Full Access。Desktop profile 由 Electron 管理，不要套用 CLI 修改生产 desktop profile。
 
-本轮用本地 link 安装源码；没有 npm release。更新源码后应先运行测试，再通过开发配置的管理器按其返回结果重新加载或重启。
+本轮用本地 link 安装源码；没有 npm release。更新源码后应先运行测试，再通过开发配置的管理器按其返回结果重新加载或重启。普通用户配置可直接用离线生成器：`node scripts/life-setup.mjs --preset core|autonomous|activity`（只输出 JSON，不改 profile）。
 
 ## 配置
 
@@ -29,11 +29,19 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
     databasePath: C:/amadeus-dev-data/life.sqlite
     tickIntervalMs: 1000
     maxReviewBatch: 20
+    wakeDelivery:
+      enabled: true
+      allowedSessionIds: [session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa]
+    bootstrap:
+      enabled: true
+      personaName: Amadeus
 ```
 
 databasePath 默认是当前 DSH_HOME/amadeus-life/life.sqlite。配置必须由可信管理员决定，模型工具不接受数据库路径。tickIntervalMs 可为 0（手动 tick）；每次最多检查 maxReviewBatch 项。停用时清理定时器、lease 与连接；卸载不会删除数据库。
 
-当前 schema v2。损坏、不兼容版本或缺少必要表会明确失败，不自动删除或换成空库。恢复前先备份，再人工检查；不要为消除报错盲删数据库。
+普通用户先看单屏 [SETUP](SETUP.md)：三种预设、Session allowlist 说明、首次 bootstrap、admin 自定义绑定与健康错误。`bootstrap` 默认关闭；它会在 Life 行启用时创建稳定默认 Persona、每 Session 一个 private Scene 与 binding，同配置重复加载幂等，已有不同 binding 时 fail closed。下面的完整配置只给需要精细控制的 Advanced 管理员。
+
+当前 schema v9。损坏、不兼容版本或缺少必要表会明确失败，不自动删除或换成空库。恢复前先备份，再人工检查；不要为消除报错盲删数据库。v2–v8 会按既有增量路径迁移；迁移前先冷备份 SQLite/WAL/SHM。
 
 ## 公共服务与事件
 

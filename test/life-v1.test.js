@@ -108,7 +108,7 @@ test('E1 v6 schema and identity isolation with revocation invalidation', async (
   const clock = makeClock()
   const core = openCore(join(tempDir(), 'life.sqlite'), clock)
   try {
-    assert.equal(core.getHealth().schemaVersion, '8')
+    assert.equal(core.getHealth().schemaVersion, '9')
     const db = new DatabaseSync(core.databasePath)
     try {
       const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name))
@@ -251,11 +251,14 @@ test('E4 unified budget defers autonomous work without blocking normal intent cr
   const core = openCore(join(tempDir(), 'life.sqlite'), clock)
   try {
     core.v1.configureBudget({ scope: SCOPE_A, windowMs: 60_000, wakeLimit: 1, tokenLimit: 10 })
-    assert.deepEqual(core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 4 }), { allowed: true })
+    const firstReservation = core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 4 })
+    assert.equal(firstReservation.allowed, true)
+    assert.ok(firstReservation.reservationId)
     assert.equal(core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 1 }).allowed, false)
     assert.equal(core.v1.getBudget(SCOPE_A).wakeCalls, 1)
-    assert.equal(core.v1.getBudget(SCOPE_A).tokensUsed, 4)
-    assert.equal(core.v1.recordTokenUsage({ scope: SCOPE_A, tokens: 2 }).tokensUsed, 6)
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensUsed, 0)
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensReserved, 4)
+    assert.equal(core.v1.recordTokenUsage({ scope: SCOPE_A, tokens: 2 }).tokensUsed, 2)
     const intent = core.createIntent({
       description: 'ordinary user intent',
       contextScope: SCOPE_A,

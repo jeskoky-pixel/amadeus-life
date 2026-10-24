@@ -1,8 +1,9 @@
 # ADR 0007: Unified activity concurrency and paid-cost reservations
 
-- Status: implemented in the current v8 development tree; real platform payment remains unverified.
+- Status: historical v8 slice; ADR 0008 extends the tree to v9. Real platform payment remains unverified.
 - Date: 2026-10-25 (Asia/Shanghai).
 - Scope: active activity concurrency in `budget_scopes`, trusted paid-capability reservation interface, additive SQLite v7 → v8.
+- Schema note: v9 (ADR 0008) preserves these counters/reservations and adds token reservation tables/provider-managed marker.
 
 ## Schema v8
 

@@ -218,7 +218,7 @@ test('A1 v3 store migrates to v4 preserving wakes, rows, revision and lease', ()
   const clock = makeClock()
   const core = openCore(databasePath, clock)
   try {
-    assert.equal(core.getHealth().schemaVersion, '8')
+    assert.equal(core.getHealth().schemaVersion, '9')
     assert.equal(core.getIntent('intent_v3_keep', { scope: SCOPE }).revision, 2)
     assert.equal(core.getActivity('activity_v3_keep', { scope: SCOPE }).status, 'running')
     const wakes = core.listWakes()
@@ -232,7 +232,7 @@ test('A1 v3 store migrates to v4 preserving wakes, rows, revision and lease', ()
   }
   const raw = new DatabaseSync(databasePath)
   try {
-    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '8')
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '9')
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wake_consumption'").get())
     assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM intents').get().n, 1)
     assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM wake_requests').get().n, 2)
@@ -242,7 +242,7 @@ test('A1 v3 store migrates to v4 preserving wakes, rows, revision and lease', ()
   }
   const reopened = openCore(databasePath, clock)
   try {
-    assert.equal(reopened.getHealth().schemaVersion, '8')
+    assert.equal(reopened.getHealth().schemaVersion, '9')
     assert.equal(reopened.listWakes().length, 2)
   } finally {
     reopened.close()
@@ -260,7 +260,7 @@ test('A2 v2 store migrates atomically to v4 with all tables and rows', () => {
   }
   const core = openCore(databasePath, makeClock())
   try {
-    assert.equal(core.getHealth().schemaVersion, '8')
+    assert.equal(core.getHealth().schemaVersion, '9')
     assert.equal(core.getIntent('intent_v2_keep', { scope: SCOPE }).revision, 2)
     assert.deepEqual(core.listWakes(), [])
   } finally {
@@ -268,7 +268,7 @@ test('A2 v2 store migrates atomically to v4 with all tables and rows', () => {
   }
   const raw = new DatabaseSync(databasePath)
   try {
-    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '8')
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '9')
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE name='wake_requests'").get())
     assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE name='wake_consumption'").get())
     assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM intents').get().n, 1)
@@ -333,8 +333,8 @@ test('A4 concurrent openers migrate a healthy v3 store exactly once', async () =
     ),
   )
   await Promise.all(workers.map((worker) => worker.terminate()))
-  assert.deepEqual(versions.slice().sort(), ['8', '8'])
-  assert.equal(rawRow(databasePath, "SELECT value FROM meta WHERE key='schema_version'").value, '8')
+  assert.deepEqual(versions.slice().sort(), ['9', '9'])
+  assert.equal(rawRow(databasePath, "SELECT value FROM meta WHERE key='schema_version'").value, '9')
   assert.ok(rawRow(databasePath, "SELECT name FROM sqlite_master WHERE name='wake_consumption'"))
 })
 
@@ -350,7 +350,7 @@ test('A5 v4 store migrates to v5 preserving wakes and existing evidence', () => 
   const clock = makeClock()
   const core = openCore(databasePath, clock)
   try {
-    assert.equal(core.getHealth().schemaVersion, '8')
+    assert.equal(core.getHealth().schemaVersion, '9')
     assert.equal(core.listWakes().length, 2)
     assert.equal(core.getWake('wake-medium-admitted').status, 'admitted')
     assert.equal(core.getWake('wake-medium-admitted').preparedMessageId, null)
@@ -363,7 +363,7 @@ test('A5 v4 store migrates to v5 preserving wakes and existing evidence', () => 
   }
   const raw = new DatabaseSync(databasePath)
   try {
-    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '8')
+    assert.equal(raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '9')
     const wakeColumns = raw.prepare("PRAGMA table_info('wake_requests')").all().map((column) => column.name)
     assert.ok(wakeColumns.includes('prepared_message_id'))
     assert.ok(wakeColumns.includes('prepared_at'))
@@ -407,7 +407,7 @@ test('A7 v5 store migrates incrementally to v6 preserving v5 evidence', () => {
   }
   const core = openCore(databasePath, makeClock())
   try {
-    assert.equal(core.getHealth().schemaVersion, '8')
+    assert.equal(core.getHealth().schemaVersion, '9')
     assert.equal(core.listWakes().length, 2)
     const evidence = core.getWakeConsumption('wake-medium-admitted')
     assert.equal(evidence.validityKnown, 1)
@@ -462,6 +462,9 @@ test('A9 v6 store migrates to v8 usage ledger, lease index, and paid reservation
       `DROP TABLE usage_events;
        DROP INDEX idx_activity_resource_lease;
        DROP TABLE cost_reservations;
+       DROP TABLE token_reservations;
+       DROP TABLE token_reservation_scopes;
+       ALTER TABLE activities DROP COLUMN provider_managed;
        ALTER TABLE budget_scopes RENAME TO budget_scopes_v8;
        CREATE TABLE budget_scopes (
          scope TEXT PRIMARY KEY, window_ms INTEGER NOT NULL, wake_limit INTEGER, token_limit INTEGER,
@@ -477,7 +480,7 @@ test('A9 v6 store migrates to v8 usage ledger, lease index, and paid reservation
   }
   const core = openCore(databasePath, makeClock())
   try {
-    assert.equal(core.getHealth().schemaVersion, '8')
+    assert.equal(core.getHealth().schemaVersion, '9')
   } finally {
     core.close()
   }
@@ -503,6 +506,9 @@ test('A10 v7 store migrates to v8 activity limits and paid reservations', () => 
   try {
     raw.exec(
       `DROP TABLE cost_reservations;
+       DROP TABLE token_reservations;
+       DROP TABLE token_reservation_scopes;
+       ALTER TABLE activities DROP COLUMN provider_managed;
        ALTER TABLE budget_scopes RENAME TO budget_scopes_v8;
        CREATE TABLE budget_scopes (
          scope TEXT PRIMARY KEY, window_ms INTEGER NOT NULL, wake_limit INTEGER, token_limit INTEGER,
@@ -518,7 +524,7 @@ test('A10 v7 store migrates to v8 activity limits and paid reservations', () => 
   }
   const core = openCore(databasePath, makeClock())
   try {
-    assert.equal(core.getHealth().schemaVersion, '8')
+    assert.equal(core.getHealth().schemaVersion, '9')
   } finally {
     core.close()
   }
@@ -533,6 +539,9 @@ test('A11 failed v7 -> v8 migration rolls back without schema changes', () => {
   try {
     raw.exec(
       `DROP TABLE cost_reservations;
+       DROP TABLE token_reservations;
+       DROP TABLE token_reservation_scopes;
+       ALTER TABLE activities DROP COLUMN provider_managed;
        ALTER TABLE budget_scopes RENAME TO budget_scopes_v8;
        CREATE TABLE budget_scopes (
          scope TEXT PRIMARY KEY, window_ms INTEGER NOT NULL, wake_limit INTEGER, token_limit INTEGER,
@@ -554,6 +563,91 @@ test('A11 failed v7 -> v8 migration rolls back without schema changes', () => {
     const columns = check.prepare("PRAGMA table_info('budget_scopes')").all().map((column) => column.name)
     assert.equal(columns.includes('activity_limit'), false)
     assert.equal(columns.includes('cost_reserved'), false)
+  } finally {
+    check.close()
+  }
+})
+
+test('A12 v8 store migrates to v9 token reservations without losing counters', () => {
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const seed = openCore(databasePath, makeClock())
+  const legacy = seed.recordActivity({ description: 'legacy provider row', ownerScope: SCOPE, providerId: 'legacy-provider' })
+  seed.transitionActivity(legacy.id, { scope: SCOPE, expectedRevision: 1, to: 'running' })
+  seed.close()
+  const raw = new DatabaseSync(databasePath)
+  try {
+    raw.exec(
+      `DROP TABLE token_reservations;
+       DROP TABLE token_reservation_scopes;
+       ALTER TABLE activities DROP COLUMN provider_managed;
+       ALTER TABLE budget_scopes RENAME TO budget_scopes_v9;
+       CREATE TABLE budget_scopes (
+         scope TEXT PRIMARY KEY, window_ms INTEGER NOT NULL, wake_limit INTEGER, token_limit INTEGER,
+         cost_limit INTEGER, window_start TEXT NOT NULL, wake_calls INTEGER NOT NULL DEFAULT 0,
+         tokens_used INTEGER NOT NULL DEFAULT 0, cost_used INTEGER NOT NULL DEFAULT 0,
+         activity_limit INTEGER, cost_reserved INTEGER NOT NULL DEFAULT 0,
+         revision INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
+       );
+       DROP TABLE budget_scopes_v9;`,
+    )
+    raw.prepare("UPDATE meta SET value = '8' WHERE key = 'schema_version'").run()
+  } finally {
+    raw.close()
+  }
+  const core = openCore(databasePath, makeClock())
+  try {
+    assert.equal(core.getHealth().schemaVersion, '9')
+    assert.equal(core.getActivity(legacy.id, { scope: SCOPE }).providerManaged, true)
+  } finally {
+    core.close()
+  }
+  const check = new DatabaseSync(databasePath)
+  try {
+    assert.ok(check.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='token_reservations'").get())
+    const columns = check.prepare("PRAGMA table_info('budget_scopes')").all().map((column) => column.name)
+    assert.ok(columns.includes('tokens_reserved'))
+    const activityColumns = check.prepare("PRAGMA table_info('activities')").all().map((column) => column.name)
+    assert.ok(activityColumns.includes('provider_managed'))
+  } finally {
+    check.close()
+  }
+})
+
+test('A13 failed v8 -> v9 migration rolls back without schema changes', () => {
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  const seed = openCore(databasePath, makeClock())
+  seed.close()
+  const raw = new DatabaseSync(databasePath)
+  try {
+    raw.exec(
+      `DROP TABLE token_reservations;
+       DROP TABLE token_reservation_scopes;
+       ALTER TABLE activities DROP COLUMN provider_managed;
+       ALTER TABLE budget_scopes RENAME TO budget_scopes_v9;
+       CREATE TABLE budget_scopes (
+         scope TEXT PRIMARY KEY, window_ms INTEGER NOT NULL, wake_limit INTEGER, token_limit INTEGER,
+         cost_limit INTEGER, window_start TEXT NOT NULL, wake_calls INTEGER NOT NULL DEFAULT 0,
+         tokens_used INTEGER NOT NULL DEFAULT 0, cost_used INTEGER NOT NULL DEFAULT 0,
+         activity_limit INTEGER, cost_reserved INTEGER NOT NULL DEFAULT 0,
+         revision INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
+       );
+       DROP TABLE budget_scopes_v9;
+       CREATE TABLE token_reservations (id TEXT PRIMARY KEY);`,
+    )
+    raw.prepare("UPDATE meta SET value = '8' WHERE key = 'schema_version'").run()
+  } finally {
+    raw.close()
+  }
+  assert.throws(() => openCore(databasePath, makeClock()), (error) => error instanceof LifeStorageError)
+  const check = new DatabaseSync(databasePath)
+  try {
+    assert.equal(check.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8')
+    const columns = check.prepare("PRAGMA table_info('budget_scopes')").all().map((column) => column.name)
+    assert.equal(columns.includes('tokens_reserved'), false)
+    const activityColumns = check.prepare("PRAGMA table_info('activities')").all().map((column) => column.name)
+    assert.equal(activityColumns.includes('provider_managed'), false)
   } finally {
     check.close()
   }
@@ -869,7 +963,7 @@ test('C1 trusted service exposes evidence methods and keeps exactly 9 model tool
   for (const method of ['recordWakeConsumed', 'recordWakeTurnEnd', 'getWakeConsumption']) {
     assert.equal(typeof life[method], 'function', method)
   }
-  assert.equal(life.getHealth().schemaVersion, '8')
+  assert.equal(life.getHealth().schemaVersion, '9')
 })
 
 test('C2 evidence stores no prompt text, intent description, or session content', () => {

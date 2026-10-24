@@ -22,7 +22,8 @@ const V5_TABLES = V4_TABLES
 const V6_TABLES = [...V5_TABLES, 'personas', 'scenes', 'scene_shares', 'session_bindings', 'budget_scopes', 'idle_state']
 const V7_TABLES = [...V6_TABLES, 'usage_events']
 const V8_TABLES = [...V7_TABLES, 'cost_reservations']
-const REQUIRED_TABLES = V8_TABLES
+const V9_TABLES = [...V8_TABLES, 'token_reservations', 'token_reservation_scopes']
+const REQUIRED_TABLES = V9_TABLES
 
 const WAKE_TABLE_SQL = `
 CREATE TABLE wake_requests (
@@ -181,6 +182,35 @@ CREATE TABLE cost_reservations (
 CREATE INDEX idx_cost_reservations_scope ON cost_reservations (scope, status);
 `
 
+const V9_SQL = `
+ALTER TABLE activities ADD COLUMN provider_managed INTEGER NOT NULL DEFAULT 0 CHECK (provider_managed IN (0, 1));
+UPDATE activities SET provider_managed = 1
+ WHERE provider_id IS NOT NULL
+   AND status IN ('pending', 'running', 'paused', 'stopping', 'unknown');
+ALTER TABLE budget_scopes ADD COLUMN tokens_reserved INTEGER NOT NULL DEFAULT 0 CHECK (tokens_reserved >= 0);
+CREATE TABLE token_reservations (
+  id TEXT PRIMARY KEY,
+  session_scope TEXT NOT NULL,
+  wake_id TEXT,
+  total_amount INTEGER NOT NULL CHECK (total_amount >= 0),
+  status TEXT NOT NULL CHECK (status IN ('reserved', 'settled')),
+  settled_tokens INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
+);
+CREATE INDEX idx_token_reservations_session ON token_reservations (session_scope, status, created_at);
+CREATE UNIQUE INDEX idx_token_reservations_wake ON token_reservations (wake_id) WHERE wake_id IS NOT NULL;
+CREATE TABLE token_reservation_scopes (
+  reservation_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  reserved_tokens INTEGER NOT NULL CHECK (reserved_tokens >= 0),
+  settled_tokens INTEGER,
+  status TEXT NOT NULL CHECK (status IN ('reserved', 'settled')),
+  PRIMARY KEY (reservation_id, scope)
+);
+`
+
 const SCHEMA_SQL = `
 CREATE TABLE meta (
   key TEXT PRIMARY KEY,
@@ -302,6 +332,7 @@ export class LifeStore {
       db.exec(V6_TABLES_SQL)
       db.exec(V7_SQL)
       db.exec(V8_SQL)
+      db.exec(V9_SQL)
       db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schema_version', LIFE_SCHEMA_VERSION)
       db.exec('COMMIT')
     } catch (error) {
@@ -343,21 +374,30 @@ export class LifeStore {
       this.#assertColumns(db, 'wake_requests', ['prepared_message_id', 'prepared_at', 'origin', 'idle_key', 'persona_id', 'scene_id'])
       this.#assertColumns(db, 'wake_consumption', ['validity_known'])
       this.#assertColumns(db, 'intents', ['persona_id', 'scene_id', 'priority'])
-      this.#assertColumns(db, 'activities', ['persona_id', 'scene_id', 'priority', 'checkpoint_ref', 'resource_lease', 'deadline_at'])
+      this.#assertColumns(db, 'activities', ['persona_id', 'scene_id', 'priority', 'checkpoint_ref', 'resource_lease', 'deadline_at', 'provider_managed'])
       this.#assertColumns(db, 'usage_events', ['target_session_id', 'seq', 'input_tokens', 'output_tokens', 'total_tokens'])
-      this.#assertColumns(db, 'budget_scopes', ['activity_limit', 'cost_reserved'])
+      this.#assertColumns(db, 'budget_scopes', ['activity_limit', 'cost_reserved', 'tokens_reserved'])
       this.#assertColumns(db, 'cost_reservations', ['id', 'scope', 'amount', 'status', 'idempotency_key'])
+      this.#assertColumns(db, 'token_reservations', ['id', 'session_scope', 'total_amount', 'status'])
+      this.#assertColumns(db, 'token_reservation_scopes', ['reservation_id', 'scope', 'reserved_tokens', 'status'])
+      return
+    }
+    if (version.value === '8') {
+      this.#assertTables(db, V8_TABLES)
+      this.#migrateFromV8(db)
       return
     }
     if (version.value === '7') {
       this.#assertTables(db, V7_TABLES)
       this.#migrateFromV7(db)
+      this.#migrateFromV8(db)
       return
     }
     if (version.value === '6') {
       this.#assertTables(db, V6_TABLES)
       this.#migrateFromV6(db)
       this.#migrateFromV7(db)
+      this.#migrateFromV8(db)
       return
     }
     if (version.value === '5') {
@@ -365,6 +405,7 @@ export class LifeStore {
       this.#migrateFromV5(db)
       this.#migrateFromV6(db)
       this.#migrateFromV7(db)
+      this.#migrateFromV8(db)
       return
     }
     if (version.value === '4') {
@@ -373,6 +414,7 @@ export class LifeStore {
       this.#migrateFromV5(db)
       this.#migrateFromV6(db)
       this.#migrateFromV7(db)
+      this.#migrateFromV8(db)
       return
     }
     if (version.value === '3') {
@@ -381,6 +423,7 @@ export class LifeStore {
       this.#migrateFromV5(db)
       this.#migrateFromV6(db)
       this.#migrateFromV7(db)
+      this.#migrateFromV8(db)
       return
     }
     if (version.value === '2') {
@@ -391,6 +434,7 @@ export class LifeStore {
       this.#migrateFromV5(db)
       this.#migrateFromV6(db)
       this.#migrateFromV7(db)
+      this.#migrateFromV8(db)
       return
     }
     throw new LifeStorageError(
@@ -451,7 +495,7 @@ export class LifeStore {
           reason: 'missing_schema_version',
         })
       }
-      if (current.value === '5' || current.value === '6' || current.value === '7' || current.value === '8') {
+      if (current.value === '5' || current.value === '6' || current.value === '7' || current.value === '8' || current.value === '9') {
         db.exec('COMMIT')
         this.#assertTables(db, V5_TABLES)
         return
@@ -498,7 +542,7 @@ export class LifeStore {
           reason: 'missing_schema_version',
         })
       }
-      if (current.value === '5' || current.value === '6' || current.value === '7' || current.value === '8') {
+      if (current.value === '5' || current.value === '6' || current.value === '7' || current.value === '8' || current.value === '9') {
         db.exec('COMMIT')
         this.#assertTables(db, V5_TABLES)
         return
@@ -548,7 +592,7 @@ export class LifeStore {
           reason: 'missing_schema_version',
         })
       }
-      if (current.value === '5' || current.value === '6' || current.value === '7' || current.value === '8') {
+      if (current.value === '5' || current.value === '6' || current.value === '7' || current.value === '8' || current.value === '9') {
         db.exec('COMMIT')
         this.#assertTables(db, V5_TABLES)
         return
@@ -601,7 +645,7 @@ export class LifeStore {
           reason: 'missing_schema_version',
         })
       }
-      if (current.value === '6' || current.value === '7' || current.value === '8') {
+      if (current.value === '6' || current.value === '7' || current.value === '8' || current.value === '9') {
         db.exec('COMMIT')
         this.#assertTables(db, V6_TABLES)
         return
@@ -647,7 +691,7 @@ export class LifeStore {
           reason: 'missing_schema_version',
         })
       }
-      if (current.value === '7' || current.value === '8') {
+      if (current.value === '7' || current.value === '8' || current.value === '9') {
         db.exec('COMMIT')
         this.#assertTables(db, V7_TABLES)
         return
@@ -692,9 +736,9 @@ export class LifeStore {
           reason: 'missing_schema_version',
         })
       }
-      if (current.value === LIFE_SCHEMA_VERSION) {
+      if (current.value === '8' || current.value === '9') {
         db.exec('COMMIT')
-        this.#assertTables(db, REQUIRED_TABLES)
+        this.#assertTables(db, V8_TABLES)
         return
       }
       if (current.value !== '7') {
@@ -704,6 +748,51 @@ export class LifeStore {
         )
       }
       db.exec(V8_SQL)
+      db.prepare("UPDATE meta SET value = '8' WHERE key = 'schema_version'").run()
+      db.exec('COMMIT')
+      this.#assertTables(db, V8_TABLES)
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // Preserve the migration failure.
+      }
+      if (error instanceof LifeStorageError) throw error
+      throw new LifeStorageError(`Life store v7 -> v8 migration failed: ${error.message}`, {
+        path: this.databasePath,
+        reason: 'migration_failed',
+        cause: error.message,
+      })
+    }
+  }
+
+  /**
+   * Additive v8 -> v9 migration: durable per-wake token reservations/settlement.
+   * Existing cost/wake/token counters and history are preserved.
+   * @param {import('node:sqlite').DatabaseSync} db - verified v8 connection.
+   */
+  #migrateFromV8(db) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
+      if (current === undefined) {
+        throw new LifeStorageError('Life store lost schema_version during migration; refusing to continue', {
+          path: this.databasePath,
+          reason: 'missing_schema_version',
+        })
+      }
+      if (current.value === LIFE_SCHEMA_VERSION) {
+        db.exec('COMMIT')
+        this.#assertTables(db, REQUIRED_TABLES)
+        return
+      }
+      if (current.value !== '8') {
+        throw new LifeStorageError(
+          `unsupported Life store schema version ${String(current.value)} during migration`,
+          { path: this.databasePath, reason: 'unsupported_schema', found: current.value },
+        )
+      }
+      db.exec(V9_SQL)
       db.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(LIFE_SCHEMA_VERSION)
       db.exec('COMMIT')
       this.#assertTables(db, REQUIRED_TABLES)
@@ -714,7 +803,7 @@ export class LifeStore {
         // Preserve the migration failure.
       }
       if (error instanceof LifeStorageError) throw error
-      throw new LifeStorageError(`Life store v7 -> v8 migration failed: ${error.message}`, {
+      throw new LifeStorageError(`Life store v8 -> v9 migration failed: ${error.message}`, {
         path: this.databasePath,
         reason: 'migration_failed',
         cause: error.message,

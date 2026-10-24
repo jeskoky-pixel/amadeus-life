@@ -89,7 +89,7 @@ export class WakeHost {
     this.lastIdle = null
     this.lastBudgetError = null
     this.lastUsage = null
-    this.autonomousTurns = new Set()
+    this.autonomousTurns = new Map()
     this.userYieldPromises = []
     this.clock = clock
     this.logger = logger
@@ -316,6 +316,7 @@ export class WakeHost {
         const budget = this.core.consumeWakeBudget({
           scope: wake.contextScope,
           estimatedTokens: Number(this.budget.estimatedTokens ?? 0) || 0,
+          wakeId: wake.id,
         })
         if (budget.allowed !== true || (this.budget.enabled === true && budget.unconfigured === true)) {
           this.lastBudgetError = `budget deferred: ${String(budget.unconfigured === true ? 'unconfigured' : budget.reason ?? 'unknown')}`
@@ -544,6 +545,7 @@ export class WakeHost {
                 targetSessionId: sessionId,
                 seq: Number(event.seq),
                 usage,
+                wakeId: this.autonomousTurns.get(key),
               }),
             }
           } catch (error) {
@@ -580,7 +582,7 @@ export class WakeHost {
         const turn = this.currentTurn.get(sessionId) ?? null
         const userSeq = Number(event.seq)
         if (turn !== null && Number.isInteger(turn)) {
-          this.autonomousTurns.add(`${sessionId}:${turn}`)
+          this.autonomousTurns.set(`${sessionId}:${turn}`, wakeId)
         }
         // Fix validity at the real event time, before any same-turn cancellation.
         if (turn !== null && Number.isInteger(userSeq) && userSeq >= 1) {

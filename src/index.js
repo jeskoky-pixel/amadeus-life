@@ -295,6 +295,7 @@ function failClosedLife(health, error) {
     createScene: fail,
     getScene: fail,
     grantSceneShare: fail,
+    revokeSceneShare: fail,
     sceneVisibleTo: fail,
     bindSession: fail,
     getSessionBinding: fail,
@@ -362,6 +363,50 @@ function heldLife(lease) {
   )
 }
 
+function parseBootstrap(raw, allowedSessionIds) {
+  if (raw === undefined) return { enabled: false }
+  if (typeof raw !== 'object' || raw === null) throw new LifeValidationError('bootstrap must be an object')
+  if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') {
+    throw new LifeValidationError('bootstrap.enabled must be a boolean')
+  }
+  if (raw.enabled !== true) return { enabled: false }
+  if (allowedSessionIds.length === 0) {
+    throw new LifeValidationError('bootstrap.enabled requires wakeDelivery.allowedSessionIds')
+  }
+  const personaName = raw.personaName === undefined
+    ? 'Amadeus'
+    : requireString(raw.personaName, 'bootstrap.personaName', 200)
+  return { enabled: true, personaName, targetSessionIds: [...allowedSessionIds] }
+}
+
+/** @param {Error} cause @param {{personaName?: string}} bootstrap */
+function setupFailedLife(cause, bootstrap) {
+  const error = cause instanceof LifeError
+    ? cause
+    : new LifeUnauthorizedError(`Life setup bootstrap failed: ${cause.message}`)
+  return failClosedLife(
+    {
+      state: 'degraded',
+      schemaVersion: LIFE_SCHEMA_VERSION,
+      error: cause.message,
+      reason: 'bootstrap_failed',
+      setup: {
+        enabled: true,
+        state: 'failed',
+        personaName: bootstrap.personaName,
+        error: { code: cause.code ?? 'LIFE_BOOTSTRAP', message: cause.message },
+      },
+      delivery: { state: 'disabled', reason: 'setup_failed' },
+      startedAt: null,
+      lastTickAt: null,
+      lastTickError: null,
+      tickCount: 0,
+      counts: null,
+    },
+    error,
+  )
+}
+
 /**
  * Mount Amadeus Life.
  * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
@@ -384,6 +429,7 @@ export function apply(ctx, config = {}) {
   const budgetConfig = parseWakeBudget(config.wakeBudget)
   const activityTools = parseFeature(config.activityTools, 'activityTools')
   const sharedRead = parseFeature(config.sharedRead, 'sharedRead')
+  const bootstrap = parseBootstrap(config.bootstrap, delivery.allowedSessionIds)
 
   let core
   try {
@@ -456,6 +502,31 @@ export function apply(ctx, config = {}) {
     ctx.logger?.error?.(`amadeus-life: startup recovery failed: ${failure.message}`)
     ctx.provide('life', unavailableLife(failure))
     return
+  }
+
+  let setup = { enabled: false, state: 'disabled' }
+  if (bootstrap.enabled) {
+    try {
+      setup = core.v1.bootstrapLocalIdentity({
+        targetSessionIds: bootstrap.targetSessionIds,
+        personaName: bootstrap.personaName,
+      })
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error))
+      try {
+        core.releaseRuntimeLease(ownerId)
+      } catch {
+        // Preserve the bootstrap failure.
+      }
+      try {
+        core.close()
+      } catch {
+        // Preserve the bootstrap failure.
+      }
+      ctx.logger?.error?.(`amadeus-life: setup bootstrap failed closed: ${failure.message}`)
+      ctx.provide('life', setupFailedLife(failure, bootstrap))
+      return
+    }
   }
 
   const wakeHost = new WakeHost({
@@ -613,6 +684,7 @@ export function apply(ctx, config = {}) {
     createScene: (input) => core.v1.createScene(input),
     getScene: (id) => core.v1.getScene(id),
     grantSceneShare: (input) => core.v1.grantSceneShare(input),
+    revokeSceneShare: (input) => core.v1.revokeSceneShare(input),
     sceneVisibleTo: (input) => core.v1.sceneVisibleTo(input),
     bindSession: (input) => core.v1.bindSession(input),
     getSessionBinding: (target) => core.v1.getSessionBinding(target),
@@ -631,7 +703,7 @@ export function apply(ctx, config = {}) {
     getSharedLifeView: (options) => core.v1.getSharedLifeView(options),
     recordSessionUsage: (options) => core.v1.recordSessionUsage(options),
     driveDueWakesOnce: () => wakeHost.driveOnce(),
-    getHealth: () => ({ ...core.getHealth(), delivery: wakeHost.health() }),
+    getHealth: () => ({ ...core.getHealth(), delivery: wakeHost.health(), setup }),
     getScopedHealth: (options) => core.getScopedHealth(options),
     close: () => dispose(),
   }

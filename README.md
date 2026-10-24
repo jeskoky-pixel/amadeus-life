@@ -2,7 +2,7 @@
 
 管理跨场景注意力、可调整的未来意图、活动调度、可选心跳与统一预算协调。
 
-**当前状态：0.1.0 开发版 Life v1.0 能力在现有工作树实现，SQLite schema v8；137 项确定性测试通过。真实隔离 DSH 的 idle/无用户输入和模型工具选择已通过；v7→v8 真实开发库冷迁移也已通过。付费能力仅有受信任的本地预留账本，真实平台与支付未验收。尚未发布 release，未连接任何真实平台或支付 Provider。**
+**当前状态：0.1.0 开发版 Life v1.0 能力在现有工作树实现，SQLite schema v9；161 项确定性测试通过。真实隔离 DSH 的 idle/无用户输入和模型工具选择已通过；v7→v8 真实开发库冷迁移也已通过，v8→v9 真实隔离开发库冷迁移已通过。付费能力仅有受信任的本地预留账本，真实平台与支付未验收。尚未发布 release，未连接任何真实平台或支付 Provider。**
 
 项目入口：[Amadeus-dsh](https://github.com/jeskoky-pixel/Amadeus-dsh)。开发顺序：P0。仓库已于 2026-10-25 根据用户要求公开，便于网页端审阅。
 
@@ -23,10 +23,11 @@
 - **Activity Provider**：受信任 `describe/start/status/cancel`（可选 `pause/resume/checkpoint/reconcile`）契约；内置确定性的 `LocalVirtualProvider` 跑完整生命周期；Provider 崩溃/无响应进入 unknown，不能由模型证据或超时自证完成。`resource_lease` 由 SQLite 部分唯一索引原子互斥，终止状态释放。
 - **模型可实际选择活动（默认关闭）**：管理员启用 `activityTools.enabled` 后新增 `life_activity_start/status/pause/resume/cancel/finish`。owner scope、Persona、Scene、principal、授权修订全部从当前 Session binding 派生；模型只提供目的/优先级/资源/截止时间与期望结果，不能选 Provider、身份或 trusted evidence；完成/失败引用只由 Provider 返回。默认仍只有原九个工具。
 - **注意力优先**：真实用户 `user/message` 到达时，同 Session 长活动优先让位：Provider 支持则暂停并保存 checkpoint，不支持则保守 `unknown`；不取消、不销毁、不把旧结果发往随机会话，之后可按原 scope/revision/授权恢复。
-- **共享只读视图（默认关闭）**：`sharedRead.enabled` 后 `life_shared_read` 从调用者 binding 推导可见场景；只显示自己的场景或显式 shared+grant 的场景，跨场景描述省略，authorization/principal 永不返回；撤销立即失效。
+- **共享只读视图（默认关闭）**：`sharedRead.enabled` 后 `life_shared_read` 从调用者 binding 推导可见场景；只显示自己的场景或显式 shared+grant 的场景，跨场景描述、dataScope、checkpoint/resource 与内部引用省略，authorization/principal 永不返回；撤销立即失效。
+- **单屏首次运行**：`scripts/life-setup.mjs` 生成 core/autonomous/activity 完整配置；autonomous/activity 含默认关闭的显式 `bootstrap`，首次加载创建一个稳定 Persona、每个 allowlist Session 一个 private Scene 与 binding，同配置重启幂等且不增 revision；已有不同 binding 时 fail closed，不覆盖历史。`--out` 只创建新文件。
 - **真实用量归账**：自主 turn 的官方 `assistant/message.data.usage` 按 Session+seq 幂等写入 `usage_events` 并累加到预算 token；无 usage 字段时健康显示 `usage_unknown`，保留保守预留，不宣称真实结算。
 - **到期复查**：注入时钟 + 有界 tick，每个意图 revision 原子产生一个本地 reconsideration 事件；重复 tick、重启与多连接不会重复领取。
-- **持久化**：`node:sqlite` + WAL + `BEGIN IMMEDIATE` + 唯一约束 + revision CAS；schema v8 为 v2–v7 的增量迁移；损坏或未知 schema 明确报错，绝不替换为空库。
+- **持久化**：`node:sqlite` + WAL + `BEGIN IMMEDIATE` + 唯一约束 + revision CAS；schema v9 为 v2–v8 的增量迁移；损坏或未知 schema 明确报错，绝不替换为空库。
 - **单运行时所有权**：适配器持有 SQLite lease；第二个仍在运行的适配器以明确健康状态失败关闭，不会执行启动恢复；只有持有者可释放；仅当记录的 PID 可证已死时才接管陈旧 lease。
 - **模块解耦**：运行时不 import 任何 QQ、Memory、State、Browser、Bilibili、Android、Games 或其他插件内部代码；源码 import 审计见测试 T10/T11。
 
@@ -52,6 +53,7 @@
 | `wakeBudget` | 关闭 | `enabled`、`windowMs`、`wakeLimit`、`tokenLimit`、`costLimit`、`activityLimit`、`estimatedTokens`；启用后为每个 allowlist scope 建立持久预算；仅配置 `activityLimit` 也可单独启用活动并发上限 |
 | `activityTools` | 关闭 | `enabled`；启用后注册本地虚拟 Provider 的六个模型工具，仍要求活动 Session 有有效 binding |
 | `sharedRead` | 关闭 | `enabled`；启用后注册只读 `life_shared_read`，仅按 binding 和显式 grant 返回 |
+| `bootstrap` | 关闭 | `enabled`、可选 `personaName`；仅 autonomous/activity 预设启用。首次加载创建一个稳定 Persona、每 allowlist Session 一个 private Scene 与 binding；同配置幂等，已有不同 binding 时 fail closed，不覆盖历史 |
 
 `tickIntervalMs` 的定时器会 `unref()`，dispose 时清除并关闭数据库。
 
@@ -88,13 +90,13 @@ npm test
 node test/life-v1.test.js
 ```
 
-当前结果：137 个确定性测试全部通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 24、life-v1 15、v1-budget 4）。覆盖 v2→v8/v3→v8/v4→v8/v5→v8/v6→v8/v7→v8 迁移与回滚、Host 消费证据与重启对账、身份隔离/撤销、idle 资格与投递、预算边界、虚拟 Provider 生命周期与崩溃、资源互斥、用户消息优先暂停、共享只读视图、官方 usage 幂等归账、意图关联/撤权竞态、迟到 Provider 结果、活动并发与付费预留。十场景映射见 [V1_TEN_SCENARIOS](docs/verification/V1_TEN_SCENARIOS.md)。Codex 已在标准 runner 执行 `node --test test/*.test.js`，137/137 通过；`npm test` 八组全通过。Creator 沙箱曾出现过 `spawn EPERM`。
+当前结果：161 个确定性测试全部通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5）。覆盖 v2→v9/v3→v9/v4→v9/v5→v9/v6→v9/v7→v9/v8→v9 迁移与回滚、Host 消费证据与重启对账、身份隔离/撤销、idle 资格与投递、预算边界与共享 Persona/global token 预留、虚拟 Provider 生命周期与崩溃、资源互斥、用户消息优先暂停、共享只读视图、活动并发、付费预留、Session 撤销隔离、Provider 权限、重绑禁止、wakeId 幂等、首次运行 bootstrap 与单屏设置。十场景映射见 [V1_TEN_SCENARIOS](docs/verification/V1_TEN_SCENARIOS.md)。Codex 独立标准 `node --test test/*.test.js` 为 161/161，`npm test` 十一组全通过；Creator 沙箱曾有 runner `spawn EPERM` 限制。
 
 
 
 ## 已知限制（未验收部分）
 
-- 独立真实 DSH Desktop 0.2.1-rc.3 已验证无用户输入 idle、模型调用受控本地 Provider 工具、插件停启与恢复，以及 v7→v8 开发库冷迁移。活动并发与付费预留在真实开发库上尚无外部 Provider 验收；确定性并发/边界测试已通过。
+- 独立真实 DSH Desktop 0.2.1-rc.3 已验证无用户输入 idle、模型调用受控本地 Provider 工具、插件停启与恢复，以及 v7→v8 开发库冷迁移。v8→v9 真实隔离开发库冷备份、迁移与恢复已通过；真实 v9 无输入唤醒、本地虚拟活动、旧工具拒绝、预算拒绝、身份重绑拒绝和首次预设启动也已通过。外部 Provider 与实际付费仍未验收。
 - 事件仅本地 outbox 发布；Host wake 仅在管理员显式启用并配置 allowlist/预算时投递，仍不发送平台消息。
 - 未接入真实外部 Activity Provider、平台发送器、付款或发布流程；`LocalVirtualProvider` 仅用于确定性本地验证。新活动/共享工具默认关闭。
 - token 仅接受官方 `assistant/message.data.usage`；缺失时显示 `usage_unknown` 并保留保守预留，不宣称真实成本结算。活动并发/付费预留接口未接真实支付 Provider；多进程真实竞争与平台验收未完成。
@@ -104,7 +106,9 @@ node test/life-v1.test.js
 - [HANDOFF.md](HANDOFF.md)：当前状态、下一步与未运行检查。
 - [运行时 ADR](docs/adr/0001-life-runtime.md)：API 调研、存储/定时/事件/降级决策。
 - [v1 身份/idle/Provider ADR](docs/adr/0006-life-v1-identity-idle-budget-provider.md)
+- [单屏设置](docs/SETUP.md)：三种预设、Session 选择/allowlist、admin 绑定、健康错误与 Advanced。
 - [v8 活动并发/付费预留 ADR](docs/adr/0007-activity-concurrency-paid-reservation.md)
+- [v9 最终加固 ADR](docs/adr/0008-life-v1-final-hardening.md)
 - [M0 模块边界](docs/M0.md)
 - [QQ ↔ Life 契约草案](docs/contracts/qq-life-v0.1.md)
 - [总体规格](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/main/docs/AMADEUS_SPEC.md)
@@ -112,4 +116,4 @@ node test/life-v1.test.js
 
 ## 发布与隐私
 
-安装与配置见 [docs/INSTALL.md](docs/INSTALL.md)，完整验收见 [docs/verification/REPORT.md](docs/verification/REPORT.md)。许可证尚待明确。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。
+安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)；本轮完整验收见 [最终加固报告](docs/verification/FINAL_HARDENING_2026-10-25.md)。许可证尚待明确。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。

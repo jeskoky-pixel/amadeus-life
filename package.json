@@ -12,6 +12,8 @@
   },
   "files": [
     "src/*.js",
+    "scripts/*.mjs",
+    "docs/SETUP.md",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
@@ -23,7 +25,7 @@
     }
   },
   "scripts": {
-    "test": "node test/quality-gaps.test.js && node test/life-core.test.js && node test/revision.test.js && node test/wake-ledger.test.js && node test/wake-host.test.js && node test/wake-consumption.test.js && node test/life-v1.test.js && node test/v1-budget.test.js"
+    "test": "node test/quality-gaps.test.js && node test/life-core.test.js && node test/revision.test.js && node test/wake-ledger.test.js && node test/wake-host.test.js && node test/wake-consumption.test.js && node test/life-v1.test.js && node test/v1-budget.test.js && node test/final-hardening.test.js && node test/setup-script.test.js && node test/bootstrap.test.js"
   },
   "engines": {
     "node": ">=22.13.0"

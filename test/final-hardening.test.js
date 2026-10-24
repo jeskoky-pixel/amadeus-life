@@ -37,6 +37,51 @@ test('FINAL1 revoking one Session preserves the other Session in one Persona', a
   } finally { core.close() }
 })
 
+test('FINAL1b revocation covers B pending/paused while A keeps revision, lease, and status', async () => {
+  const core = open()
+  try {
+    const persona = core.v1.createPersona({ name: 'shared persona' })
+    const sceneA = core.v1.createScene({ personaId: persona.id, contextScope: scopeA })
+    const sceneB = core.v1.createScene({ personaId: persona.id, contextScope: scopeB })
+    bind(core, A, persona.id, sceneA.id)
+    bind(core, B, persona.id, sceneB.id)
+    const activityA = await core.v1.startActivity({ description: 'A work', ownerScope: scopeA, personaId: persona.id, sceneId: sceneA.id, resourceLease: 'A pending-safe' })
+    const pausedB = await core.v1.startActivity({ description: 'B paused work', ownerScope: scopeB, personaId: persona.id, sceneId: sceneB.id, resourceLease: 'B paused' })
+    await core.v1.operateActivity('pause', pausedB.id, scopeB)
+
+    let releaseStart
+    let enteredStart
+    const entered = new Promise((resolve) => { enteredStart = resolve })
+    const gate = new Promise((resolve) => { releaseStart = resolve })
+    core.v1.registerActivityProvider({
+      id: 'final-delayed',
+      describe: () => ({ providerId: 'final-delayed', external: false }),
+      start: async () => { enteredStart(); await gate; return { status: 'running', evidenceRefs: ['final:late-start'] } },
+      status: () => ({ status: 'running' }),
+      cancel: () => ({ status: 'cancelled' }),
+    })
+    const pendingB = core.v1.startActivity({
+      description: 'B pending work',
+      ownerScope: scopeB,
+      providerId: 'final-delayed',
+      personaId: persona.id,
+      sceneId: sceneB.id,
+      resourceLease: 'B pending',
+    })
+    await entered
+    core.v1.revokeSessionBinding({ targetSessionId: B })
+    releaseStart()
+    const late = await pendingB
+    assert.equal(late.status, 'unknown')
+    assert.equal(late.resourceLease, 'B pending')
+    assert.equal(core.getActivity(pausedB.id, { scope: scopeB }).status, 'unknown')
+    const stillA = core.getActivity(activityA.id, { scope: scopeA })
+    assert.equal(stillA.status, 'running')
+    assert.equal(stillA.revision, activityA.revision)
+    assert.equal(stillA.resourceLease, 'A pending-safe')
+  } finally { core.close() }
+})
+
 test('FINAL2 an untrusted transition cannot fail Provider work and release its resource', async () => {
   const core = open()
   try {
@@ -86,10 +131,42 @@ test('FINAL4 shared read excludes private internals and unscoped historical rows
     assert.ok(cross)
     assert.equal(cross.activities.some((item) => item.id === legacy.id), false)
     const payload = JSON.stringify(cross)
+    assert.equal(cross.dataScope, undefined, 'another Scene owner scope must not enter model output')
     assert.equal(payload.includes('secret-resource'), false)
     assert.equal(payload.includes('checkpointRef'), false)
     assert.equal(payload.includes('legacy unscoped'), false)
     assert.equal(cross.activities.some((item) => item.id === activity.id), true)
+  } finally { core.close() }
+})
+
+test('FINAL6 Provider failure without evidence does not release its resource', async () => {
+  const core = open()
+  try {
+    core.v1.registerActivityProvider({
+      describe: () => ({ providerId: 'no-proof-provider' }),
+      start: () => ({ status: 'running', evidenceRefs: ['start:confirmed'] }),
+      status: () => ({ status: 'running' }),
+      cancel: () => ({ status: 'unknown' }),
+      fail: () => ({ status: 'failed' }),
+    })
+    const activity = await core.v1.startActivity({ description: 'external-like work', ownerScope: scopeA, providerId: 'no-proof-provider', resourceLease: 'no-proof-resource' })
+    await assert.rejects(() => core.v1.finishActivity(activity.id, scopeA, 'failed'))
+    assert.equal(core.getActivity(activity.id, { scope: scopeA }).status, 'running')
+    await assert.rejects(() => core.v1.startActivity({ description: 'contender', ownerScope: scopeA, resourceLease: 'no-proof-resource' }))
+  } finally { core.close() }
+})
+
+test('FINAL7 one Wake id cannot reserve the autonomous budget twice', () => {
+  const core = open()
+  try {
+    core.v1.configureBudget({ scope: scopeA, windowMs: 60_000, wakeLimit: 2, tokenLimit: 200 })
+    const first = core.consumeWakeBudget({ scope: scopeA, estimatedTokens: 100, wakeId: 'wake_same' })
+    assert.equal(first.allowed, true)
+    const second = core.consumeWakeBudget({ scope: scopeA, estimatedTokens: 100, wakeId: 'wake_same' })
+    assert.equal(second.allowed, true)
+    assert.equal(second.reservationId, first.reservationId)
+    assert.equal(core.v1.getBudget(scopeA).wakeCalls, 1)
+    assert.equal(core.v1.getBudget(scopeA).tokensReserved, 100)
   } finally { core.close() }
 })
 

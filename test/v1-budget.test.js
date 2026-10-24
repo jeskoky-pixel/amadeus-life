@@ -179,6 +179,194 @@ test('BUD3 paid cost reservation is atomic, idempotent, and conservatively held 
   }
 })
 
+test('BUD5 token reservation survives restart/window/config and settles actual usage once', () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  let core = openCore(databasePath, clock)
+  const { persona } = identity(core, SESSION_A)
+  for (const scope of [SCOPE_A, `persona:${persona.id}`, 'global']) {
+    core.v1.configureBudget({ scope, windowMs: 60_000, tokenLimit: 100, wakeLimit: 10 })
+  }
+  const reservation = core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 100 })
+  assert.equal(reservation.allowed, true)
+  assert.equal(core.v1.getBudget(SCOPE_A).tokensReserved, 100)
+  core.v1.configureBudget({ scope: SCOPE_A, windowMs: 60_000, tokenLimit: 200, wakeLimit: 10 })
+  assert.equal(core.v1.getBudget(SCOPE_A).tokensReserved, 100)
+  core.close()
+
+  core = openCore(databasePath, clock)
+  try {
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensReserved, 100)
+    clock.advance(61_000)
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensReserved, 100)
+    assert.equal(core.v1.recordSessionUsage({
+      targetSessionId: SESSION_A,
+      seq: 10,
+      usage: { totalTokens: 70 },
+    }).recorded, true)
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensUsed, 70)
+    assert.equal(core.v1.getBudget(`persona:${persona.id}`).tokensUsed, 70)
+    assert.equal(core.v1.getBudget('global').tokensUsed, 70)
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensReserved, 0)
+    core.v1.recordSessionUsage({ targetSessionId: SESSION_A, seq: 10, usage: { totalTokens: 70 } })
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensUsed, 70)
+  } finally {
+    core.close()
+  }
+})
+
+test('BUD6 actual usage over reservation is conservative and blocks new autonomous work', () => {
+  const clock = makeClock()
+  const core = openCore(join(tempDir(), 'life.sqlite'), clock)
+  try {
+    const { persona } = identity(core, SESSION_A)
+    for (const scope of [SCOPE_A, `persona:${persona.id}`, 'global']) {
+      core.v1.configureBudget({ scope, windowMs: 60_000, tokenLimit: 100 })
+    }
+    assert.equal(core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 100 }).allowed, true)
+    core.v1.recordSessionUsage({ targetSessionId: SESSION_A, seq: 20, usage: { totalTokens: 150 } })
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensUsed, 150)
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensReserved, 0)
+    assert.equal(core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 1 }).allowed, false)
+    clock.advance(60_001)
+    assert.equal(core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 1 }).allowed, true)
+  } finally {
+    core.close()
+  }
+})
+
+test('BUD7 shared Persona/global token limits are not exceeded across two workers', async () => {
+  const databasePath = join(tempDir(), 'life.sqlite')
+  const clock = makeClock()
+  const seed = openCore(databasePath, clock)
+  const persona = seed.v1.createPersona({ name: 'shared budget persona' })
+  for (const [session, scope] of [[SESSION_A, SCOPE_A], [SESSION_B, SCOPE_B]]) {
+    const scene = seed.v1.createScene({ personaId: persona.id, contextScope: scope })
+    seed.v1.bindSession({
+      targetSessionId: session,
+      personaId: persona.id,
+      sceneId: scene.id,
+      principalId: `principal:${session}`,
+      authorizationRef: 'admin:budget',
+    })
+  }
+  for (const scope of [SCOPE_A, SCOPE_B]) {
+    seed.v1.configureBudget({ scope, windowMs: 60_000, tokenLimit: 1000, wakeLimit: 10 })
+  }
+  seed.v1.configureBudget({ scope: `persona:${persona.id}`, windowMs: 60_000, tokenLimit: 100, wakeLimit: 1 })
+  seed.v1.configureBudget({ scope: 'global', windowMs: 60_000, tokenLimit: 100, wakeLimit: 1 })
+  seed.close()
+
+  const workers = [SCOPE_A, SCOPE_B].map((scope) => new Worker(new URL('./v8-worker.js', import.meta.url), {
+    workerData: { databasePath, scope, mode: 'wake' },
+  }))
+  const results = []
+  try {
+    await Promise.all(workers.map((worker) => new Promise((resolve, reject) => {
+      worker.on('message', (message) => {
+        if (message.type === 'ready') {
+          worker.postMessage('go')
+          return
+        }
+        if (message.type === 'done') {
+          results.push(message)
+          resolve()
+          return
+        }
+        reject(new Error(`unexpected worker message: ${message.type}`))
+      })
+      worker.on('error', reject)
+    })))
+  } finally {
+    await Promise.all(workers.map((worker) => worker.terminate()))
+  }
+  assert.equal(results.length, 2)
+  assert.equal(results.filter((result) => result.ok === true).length, 1)
+  const winner = results.find((result) => result.ok === true)
+  const check = openCore(databasePath, clock)
+  try {
+    assert.equal(check.v1.getBudget(`persona:${persona.id}`).wakeCalls, 1)
+    assert.equal(check.v1.getBudget('global').wakeCalls, 1)
+    assert.equal(check.v1.getBudget(`persona:${persona.id}`).tokensReserved, 60)
+    assert.equal(check.v1.getBudget(winner.scope).tokensReserved, 60)
+  } finally {
+    check.close()
+  }
+})
+
+test('BUD8 a wakeId reservation is idempotent across restart and conflicts fail closed', () => {
+  const clock = makeClock()
+  const dir = tempDir()
+  const databasePath = join(dir, 'life.sqlite')
+  let core = openCore(databasePath, clock)
+  core.v1.configureBudget({ scope: SCOPE_A, windowMs: 60_000, wakeLimit: 2, tokenLimit: 200 })
+  const first = core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 100, wakeId: 'wake_repeat' })
+  assert.equal(first.allowed, true)
+  core.close()
+
+  core = openCore(databasePath, clock)
+  try {
+    const second = core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 100, wakeId: 'wake_repeat' })
+    assert.equal(second.allowed, true)
+    assert.equal(second.reservationId, first.reservationId)
+    assert.equal(core.v1.getBudget(SCOPE_A).wakeCalls, 1)
+    assert.equal(core.v1.getBudget(SCOPE_A).tokensReserved, 100)
+    assert.throws(
+      () => core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 50, wakeId: 'wake_repeat' }),
+      /different scope or amount/,
+    )
+    const unbound = core.consumeWakeBudget({ scope: SCOPE_A, estimatedTokens: 1, wakeId: null })
+    assert.equal(unbound.allowed, true)
+    assert.notEqual(unbound.reservationId, first.reservationId)
+    assert.equal(core.v1.getBudget(SCOPE_A).wakeCalls, 2)
+  } finally {
+    core.close()
+  }
+})
+
+test('BUD9 two workers using the same wakeId reserve once', async () => {
+  const databasePath = join(tempDir(), 'life.sqlite')
+  const clock = makeClock()
+  const seed = openCore(databasePath, clock)
+  seed.v1.configureBudget({ scope: SCOPE_A, windowMs: 60_000, wakeLimit: 1, tokenLimit: 100 })
+  seed.close()
+
+  const workers = [1, 2].map(() => new Worker(new URL('./v8-worker.js', import.meta.url), {
+    workerData: { databasePath, scope: SCOPE_A, mode: 'wake', wakeId: 'wake_worker_same' },
+  }))
+  const results = []
+  try {
+    await Promise.all(workers.map((worker) => new Promise((resolve, reject) => {
+      worker.on('message', (message) => {
+        if (message.type === 'ready') {
+          worker.postMessage('go')
+          return
+        }
+        if (message.type === 'done') {
+          results.push(message)
+          resolve()
+          return
+        }
+        reject(new Error(`unexpected worker message: ${message.type}`))
+      })
+      worker.on('error', reject)
+    })))
+  } finally {
+    await Promise.all(workers.map((worker) => worker.terminate()))
+  }
+  assert.equal(results.length, 2)
+  assert.equal(results.every((result) => result.ok === true), true)
+  assert.equal(results[0].id, results[1].id)
+  const check = openCore(databasePath, clock)
+  try {
+    assert.equal(check.v1.getBudget(SCOPE_A).wakeCalls, 1)
+    assert.equal(check.v1.getBudget(SCOPE_A).tokensReserved, 60)
+  } finally {
+    check.close()
+  }
+})
+
 test('BUD4 two independent workers cannot both exceed the activity limit', async () => {
   const databasePath = join(tempDir(), 'life.sqlite')
   const clock = makeClock()

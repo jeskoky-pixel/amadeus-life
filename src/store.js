@@ -16,7 +16,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { LifeClosedError, LifeStorageError, LIFE_SCHEMA_VERSION } from './model.js'
 
 const V2_TABLES = ['meta', 'intents', 'intent_events', 'activities', 'runtime_leases']
-const REQUIRED_TABLES = [...V2_TABLES, 'wake_requests']
+const V3_TABLES = [...V2_TABLES, 'wake_requests']
+const REQUIRED_TABLES = [...V3_TABLES, 'wake_consumption']
 
 const WAKE_TABLE_SQL = `
 CREATE TABLE wake_requests (
@@ -44,6 +45,24 @@ CREATE TABLE wake_requests (
 CREATE INDEX idx_wake_status ON wake_requests (status, next_attempt_at);
 CREATE INDEX idx_wake_scope ON wake_requests (context_scope, status);
 CREATE INDEX idx_wake_intent ON wake_requests (intent_id, intent_revision);
+`
+
+const WAKE_CONSUMPTION_SQL = `
+CREATE TABLE wake_consumption (
+  wake_id TEXT NOT NULL,
+  target_session_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  turn_seq INTEGER NOT NULL CHECK (turn_seq >= 1),
+  user_message_seq INTEGER NOT NULL CHECK (user_message_seq >= 1),
+  valid_at_consumption INTEGER NOT NULL CHECK (valid_at_consumption IN (0, 1)),
+  consumed_at TEXT NOT NULL,
+  turn_end_seq INTEGER,
+  turn_reason TEXT,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (wake_id, message_id)
+);
+CREATE INDEX idx_wake_consumption_turn ON wake_consumption (target_session_id, turn_seq);
 `
 
 const SCHEMA_SQL = `
@@ -96,6 +115,7 @@ CREATE TABLE runtime_leases (
   acquired_at TEXT NOT NULL
 );
 ${WAKE_TABLE_SQL}
+${WAKE_CONSUMPTION_SQL}
 `
 
 /** One verified connection to the Life ledger. */
@@ -202,6 +222,11 @@ export class LifeStore {
       this.#assertTables(db, REQUIRED_TABLES)
       return
     }
+    if (version.value === '3') {
+      this.#assertTables(db, V3_TABLES)
+      this.#migrateFromV3(db)
+      return
+    }
     if (version.value === '2') {
       // Verify the complete v2 shape before touching anything; a broken v2
       // store is never "migrated" into a different shape.
@@ -233,9 +258,9 @@ export class LifeStore {
   }
 
   /**
-   * Additive v2 -> v3 migration. Re-checks the version inside the write
-   * transaction so two concurrent openers cannot migrate twice; any failure
-   * rolls back and leaves the original v2 store untouched.
+   * Additive v2 -> v4 migration in one transaction (v3 wake table plus v4
+   * consumption evidence). Re-checks the version inside the write transaction;
+   * any failure rolls back and leaves the original v2 store untouched.
    * @param {import('node:sqlite').DatabaseSync} db - verified v2 connection.
    */
   #migrateFromV2(db) {
@@ -261,6 +286,7 @@ export class LifeStore {
         )
       }
       db.exec(WAKE_TABLE_SQL)
+      db.exec(WAKE_CONSUMPTION_SQL)
       db.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(LIFE_SCHEMA_VERSION)
       db.exec('COMMIT')
       this.#assertTables(db, REQUIRED_TABLES)
@@ -271,7 +297,52 @@ export class LifeStore {
         // Preserve the migration failure.
       }
       if (error instanceof LifeStorageError) throw error
-      throw new LifeStorageError(`Life store v2 -> v3 migration failed: ${error.message}`, {
+      throw new LifeStorageError(`Life store v2 -> v4 migration failed: ${error.message}`, {
+        path: this.databasePath,
+        reason: 'migration_failed',
+        cause: error.message,
+      })
+    }
+  }
+
+  /**
+   * Additive v3 -> v4 migration: only the consumption evidence table/index.
+   * Re-checks the version inside the transaction; failure rolls back to v3.
+   * @param {import('node:sqlite').DatabaseSync} db - verified v3 connection.
+   */
+  #migrateFromV3(db) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
+      if (current === undefined) {
+        throw new LifeStorageError('Life store lost schema_version during migration; refusing to continue', {
+          path: this.databasePath,
+          reason: 'missing_schema_version',
+        })
+      }
+      if (current.value === LIFE_SCHEMA_VERSION) {
+        db.exec('COMMIT')
+        this.#assertTables(db, REQUIRED_TABLES)
+        return
+      }
+      if (current.value !== '3') {
+        throw new LifeStorageError(
+          `unsupported Life store schema version ${String(current.value)} during migration`,
+          { path: this.databasePath, reason: 'unsupported_schema', found: current.value },
+        )
+      }
+      db.exec(WAKE_CONSUMPTION_SQL)
+      db.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(LIFE_SCHEMA_VERSION)
+      db.exec('COMMIT')
+      this.#assertTables(db, REQUIRED_TABLES)
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // Preserve the migration failure.
+      }
+      if (error instanceof LifeStorageError) throw error
+      throw new LifeStorageError(`Life store v3 -> v4 migration failed: ${error.message}`, {
         path: this.databasePath,
         reason: 'migration_failed',
         cause: error.message,

@@ -109,6 +109,27 @@ function wakeView(row) {
 }
 
 /**
+ * Convert one `wake_consumption` row into the trusted evidence view.
+ * @param {Record<string, unknown>} row - database row.
+ * @returns {Record<string, unknown>} consumption evidence view.
+ */
+function wakeConsumptionView(row) {
+  return {
+    wakeId: row.wake_id,
+    targetSessionId: row.target_session_id,
+    messageId: row.message_id,
+    turnSeq: row.turn_seq,
+    userMessageSeq: row.user_message_seq,
+    validAtConsumption: Number(row.valid_at_consumption),
+    consumedAt: row.consumed_at,
+    turnEndSeq: row.turn_end_seq,
+    turnReason: row.turn_reason,
+    completedAt: row.completed_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+/**
  * Build a status-count map with every declared status present.
  * @param {Record<string, unknown>[]} rows - `{ status, n }` rows.
  * @param {readonly string[]} statuses - statuses to seed.
@@ -1367,6 +1388,206 @@ export class LifeCore {
   }
 
   /**
+   * Record trusted DSH consumption evidence for an admitted wake. The host
+   * adapter asserts the session/message/turn coordinates; the core validates
+   * them and captures whether the intent/event/revision/scope/auth/expiry were
+   * still valid at that moment. It does not store prompt or intent text.
+   * @param {string} id - wake id.
+   * @param {{targetSessionId: string, messageId: string, turnSeq: number, userMessageSeq: number}} coordinates - trusted event coordinates.
+   * @returns {Record<string, unknown>} consumption evidence.
+   */
+  recordWakeConsumed(id, { targetSessionId, messageId, turnSeq, userMessageSeq } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const target = requireString(targetSessionId, 'targetSessionId', 200)
+    if (!isDshSessionScope(`session:${target}`)) {
+      throw new LifeValidationError('targetSessionId must be a DSH session id')
+    }
+    const message = requireString(messageId, 'messageId', 200)
+    const turn = assertInteger(turnSeq, 'turnSeq', { min: 1 })
+    const userSeq = assertInteger(userMessageSeq, 'userMessageSeq', { min: 1 })
+    return this.store.writeTransaction(() => {
+      const wake = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (wake === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (wake.target_session_id !== target) {
+        throw new LifeUnauthorizedError('wake target session does not match consumption evidence', { wakeId })
+      }
+      if (!['admitted', 'superseded', 'uncertain'].includes(String(wake.status))) {
+        throw new LifeInvalidTransitionError(`wake in status "${String(wake.status)}" cannot record consumption`, {
+          wakeId,
+          status: wake.status,
+        })
+      }
+      if (wake.message_id !== message) {
+        throw new LifeValidationError('message id does not match the admitted wake', {
+          wakeId,
+          expectedMessageId: wake.message_id,
+          messageId: message,
+        })
+      }
+      const existing = this.store.get(
+        'SELECT * FROM wake_consumption WHERE wake_id = ? AND message_id = ?',
+        wakeId,
+        message,
+      )
+      if (existing !== undefined) {
+        if (
+          existing.target_session_id === target &&
+          Number(existing.turn_seq) === turn &&
+          Number(existing.user_message_seq) === userSeq
+        ) {
+          return wakeConsumptionView(existing)
+        }
+        throw new LifeRevisionConflictError('conflicting consumption evidence already exists', { wakeId })
+      }
+      const invalidReason = this.#wakeConsumptionValidity(wake, this.nowMs())
+      const valid = invalidReason === null ? 1 : 0
+      const now = this.iso()
+      this.store.run(
+        `INSERT INTO wake_consumption
+          (wake_id, target_session_id, message_id, turn_seq, user_message_seq,
+           valid_at_consumption, consumed_at, turn_end_seq, turn_reason, completed_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
+        wakeId,
+        target,
+        message,
+        turn,
+        userSeq,
+        valid,
+        now,
+        now,
+      )
+      if (valid === 0 && wake.status === 'admitted') {
+        this.store.run(
+          `UPDATE wake_requests SET status = 'superseded', last_error = ?, updated_at = ?
+           WHERE id = ? AND status = 'admitted'`,
+          `invalid at consumption: ${String(invalidReason)}`,
+          now,
+          wakeId,
+        )
+      }
+      return this.#wakeConsumptionView(wakeId, message)
+    })
+  }
+
+  /**
+   * Record trusted turn-end evidence for one consumed wake. A completed turn
+   * can execute the wake only if consumption was valid; a later intent change
+   * never erases the completed turn. Failed/cancelled turns never execute.
+   * @param {string} id - wake id.
+   * @param {{targetSessionId: string, messageId: string, turnSeq: number, turnEndSeq: number, reason: string}} coordinates - trusted event coordinates.
+   * @returns {Record<string, unknown>} consumption evidence.
+   */
+  recordWakeTurnEnd(id, { targetSessionId, messageId, turnSeq, turnEndSeq, reason } = {}) {
+    this.#ensureOpen()
+    this.#assertWritable()
+    const wakeId = requireString(id, 'id', 200)
+    const target = requireString(targetSessionId, 'targetSessionId', 200)
+    const message = requireString(messageId, 'messageId', 200)
+    const turn = assertInteger(turnSeq, 'turnSeq', { min: 1 })
+    const endSeq = assertInteger(turnEndSeq, 'turnEndSeq', { min: 1 })
+    const why = requireString(reason, 'reason', 100)
+    return this.store.writeTransaction(() => {
+      const wake = this.store.get('SELECT * FROM wake_requests WHERE id = ?', wakeId)
+      if (wake === undefined) throw new LifeNotFoundError(`wake "${wakeId}" was not found`, { wakeId })
+      if (wake.target_session_id !== target) {
+        throw new LifeUnauthorizedError('wake target session does not match turn-end evidence', { wakeId })
+      }
+      if (wake.message_id !== message) {
+        throw new LifeValidationError('message id does not match the admitted wake', { wakeId })
+      }
+      const evidence = this.store.get(
+        'SELECT * FROM wake_consumption WHERE wake_id = ? AND message_id = ?',
+        wakeId,
+        message,
+      )
+      if (evidence === undefined) {
+        throw new LifeValidationError('turn end requires prior consumption evidence', { wakeId })
+      }
+      if (evidence.target_session_id !== target) {
+        throw new LifeUnauthorizedError('consumption evidence session mismatch', { wakeId })
+      }
+      if (Number(evidence.turn_seq) !== turn) {
+        throw new LifeRevisionConflictError('turn end sequence does not match consumed turn', {
+          wakeId,
+          consumedTurn: evidence.turn_seq,
+          turnSeq: turn,
+        })
+      }
+      if (evidence.turn_end_seq !== null && evidence.turn_end_seq !== undefined) {
+        if (Number(evidence.turn_end_seq) === endSeq && evidence.turn_reason === why) {
+          return wakeConsumptionView(evidence)
+        }
+        throw new LifeRevisionConflictError('conflicting turn-end evidence already exists', { wakeId })
+      }
+      if (endSeq <= Number(evidence.user_message_seq)) {
+        throw new LifeValidationError('turnEndSeq must be greater than userMessageSeq', {
+          wakeId,
+          userMessageSeq: evidence.user_message_seq,
+          turnEndSeq: endSeq,
+        })
+      }
+      const now = this.iso()
+      this.store.run(
+        `UPDATE wake_consumption
+         SET turn_end_seq = ?, turn_reason = ?, completed_at = ?, updated_at = ?
+         WHERE wake_id = ? AND message_id = ?`,
+        endSeq,
+        why,
+        why === 'completed' ? now : null,
+        now,
+        wakeId,
+        message,
+      )
+      if (why === 'completed') {
+        if (Number(evidence.valid_at_consumption) === 1 && (wake.status === 'admitted' || wake.status === 'uncertain')) {
+          const result = this.store.run(
+            `UPDATE wake_requests SET status = 'executed', executed_at = ?, executed_turn_seq = ?, updated_at = ?
+             WHERE id = ? AND status IN ('admitted', 'uncertain')`,
+            now,
+            turn,
+            now,
+            wakeId,
+          )
+          if (Number(result.changes) !== 1) {
+            throw new LifeInvalidTransitionError('wake status changed during completed-turn evidence', { wakeId })
+          }
+        } else if (wake.status === 'admitted' || wake.status === 'uncertain') {
+          this.store.run(
+            `UPDATE wake_requests SET status = 'superseded',
+               last_error = 'turn completed without valid consumption evidence', updated_at = ?
+             WHERE id = ?`,
+            now,
+            wakeId,
+          )
+        }
+      } else if (wake.status === 'admitted' || wake.status === 'uncertain') {
+        this.store.run(
+          `UPDATE wake_requests SET status = 'uncertain', last_error = ?, updated_at = ?
+           WHERE id = ?`,
+          `turn ended: ${why}`,
+          now,
+          wakeId,
+        )
+      }
+      return this.#wakeConsumptionView(wakeId, message)
+    })
+  }
+
+  /**
+   * Read trusted consumption evidence for one wake, if any. This is a trusted
+   * service read only; it is never exposed as a model tool.
+   * @param {string} id - wake id.
+   * @returns {Record<string, unknown> | null} evidence view or null.
+   */
+  getWakeConsumption(id) {
+    this.#ensureOpen()
+    const wakeId = requireString(id, 'id', 200)
+    return this.#wakeConsumptionView(wakeId, null)
+  }
+
+  /**
    * Mark a claimed wake uncertain. It will not be claimed again automatically;
    * later reconciliation must decide.
    * @param {string} id - wake id.
@@ -1477,6 +1698,53 @@ export class LifeCore {
             batch,
           )
     return rows.map(wakeView)
+  }
+
+  /**
+   * Read one consumption evidence row.
+   * @param {string} wakeId - wake id.
+   * @param {string | null} messageId - message id, or null for the latest row.
+   * @returns {Record<string, unknown> | null} evidence view.
+   */
+  #wakeConsumptionView(wakeId, messageId) {
+    const row =
+      messageId === null
+        ? this.store.get(
+            'SELECT * FROM wake_consumption WHERE wake_id = ? ORDER BY consumed_at DESC LIMIT 1',
+            wakeId,
+          )
+        : this.store.get(
+            'SELECT * FROM wake_consumption WHERE wake_id = ? AND message_id = ?',
+            wakeId,
+            messageId,
+          )
+    return row === undefined ? null : wakeConsumptionView(row)
+  }
+
+  /**
+   * Check whether the intent/event/revision/scope/auth/expiry were still valid
+   * when consumption was first observed. Acknowledged events are allowed; only
+   * superseded/missing events invalidate the old wake.
+   * @param {Record<string, unknown>} wake - wake row.
+   * @param {number} nowMs - current clock.
+   * @returns {string | null} invalidation reason or null.
+   */
+  #wakeConsumptionValidity(wake, nowMs) {
+    const event = this.store.get('SELECT id, type, status FROM intent_events WHERE id = ?', wake.event_id)
+    if (event === undefined) return 'event missing'
+    if (event.type !== 'reconsideration') return 'event kind mismatch'
+    if (event.status === 'superseded') return 'event superseded'
+    const intent = this.store.get(
+      'SELECT id, status, revision, context_scope, authorization_ref FROM intents WHERE id = ?',
+      wake.intent_id,
+    )
+    if (intent === undefined) return 'intent missing'
+    if (intent.status !== 'active') return 'intent not active'
+    if (Number(intent.revision) !== Number(wake.intent_revision)) return 'intent revision changed'
+    if (intent.context_scope !== wake.context_scope) return 'intent scope changed'
+    if (intent.authorization_ref !== wake.authorization_ref) return 'intent authorization changed'
+    if (wake.expires_at !== null && Date.parse(String(wake.expires_at)) <= nowMs) return 'wake expired'
+    return null
   }
 
   /**

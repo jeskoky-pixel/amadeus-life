@@ -23,7 +23,7 @@
     }
   },
   "scripts": {
-    "test": "node test/quality-gaps.test.js && node test/life-core.test.js && node test/revision.test.js && node test/wake-ledger.test.js && node test/wake-host.test.js"
+    "test": "node test/quality-gaps.test.js && node test/life-core.test.js && node test/revision.test.js && node test/wake-ledger.test.js && node test/wake-host.test.js && node test/wake-consumption.test.js"
   },
   "engines": {
     "node": ">=22.13.0"

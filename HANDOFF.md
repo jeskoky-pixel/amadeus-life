@@ -1,5 +1,11 @@
 # amadeus-life 交接
 
+## 最新检查点：SQLite v4 wake 消费证据（2026-10-25）
+
+- 原 cordis Creator 继续完成 v3→v4 增量迁移及可信 `recordWakeConsumed` / `recordWakeTurnEnd` / `getWakeConsumption`；消费时的意图有效性与 Session 消费/完成坐标分别保存，不增加模型工具。Codex 独立标准 `node --test` 为 100/100，`npm test` 六组均通过。
+- 真实隔离 Desktop 在原 Creator 空闲后停止，冷备份原 v3 SQLite/WAL/SHM 并校验哈希；重启后开发库为 schema 4、integrity ok。原 10 意图、5 事件、8 活动、1 wake、1 lease 保留，意图/事件/活动不可变字段与 wake 行均和备份一致；新增证据表空。原 Session 可读、Life bundle active、私有 Host 探针未加载。见 [v4 验收](docs/verification/WAKE_CONSUMPTION_V4_2026-10-25.md)。
+- 当前 Host adapter 尚未调用新证据接口，真实合成 wake 的旧 `superseded` 记录保持不动；下一段接入事件并对账 admitted/uncertain，随后继续 idle 与完整 v1.0。迟到的恢复证据若不能证明消费瞬间意图有效，只能保守记录消费，不能推断旧意图可执行。
+
 ## 最新检查点：可信 Host 到期唤醒首段（2026-10-25）
 
 - 原 cordis Creator 实现管理员显式启用、Session allowlist、官方 `resolveAgent → followup → sessions.flush` 的 Life Host adapter；Codex 的跨 Session 伪证、500 行旧 wake 遮蔽、缺失事件监听、可选服务注入及服务撤销竞态回归均经同一 Creator 会话定点返工。独立标准 `node --test` 为 85/85，`npm test` 全部通过。

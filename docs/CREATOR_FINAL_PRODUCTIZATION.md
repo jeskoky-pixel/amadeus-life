@@ -1,6 +1,6 @@
 # Life final productization report
 
-Date: 2026-10-25  
+Date: 2026-10-25
 Scope: the existing `amadeus-life` worktree only. No Git commit/push, no installation into a real profile, no production/DSH/QQ/Memory data, no credentials, no external platform or payment call.
 
 ## What changed

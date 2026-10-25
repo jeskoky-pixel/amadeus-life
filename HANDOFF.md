@@ -1,43 +1,128 @@
 # amadeus-life 交接
 
-记录日期：2026-10-24（Asia/Shanghai）。
+## 最新状态（2026-10-26）
 
-## 仓库
+Life 1.0.0 的主要实现和定点返工由原持续 DSH Creator 会话完成。Codex 独立 178/178 测试通过；用户版 README 更新后重建的候选包 `amadeus-life-1.0.0.tgz` SHA-256 为 `6b9ef52fa1b1dfafb80a2ac4d9fc5a70e8d7d23e0104b259b2d0b0e3167f2654`。全新隔离官方 DSH Desktop 对同一运行时代码通过七页设置、首次配置、本地合成意图与活动、GUI 参数保存/校验、备份恢复、硬重启以及停启/卸载重装与数据保留。公开证据见 `docs/verification/FINAL_DESKTOP_PRODUCTIZATION_2026-10-25.md`。原 PR #2 保持 OPEN；未合并、未公开发行、未部署生产、未连接真实平台或支付 Provider。
 
-- 远端：https://github.com/jeskoky-pixel/amadeus-life
-- 默认分支：main
-- 可见性：公开（2026-10-25 用户明确要求）
-- 开发顺序：P0
-- 本地位置：主项目目录下 plugins/amadeus-life/，属于独立 Git 仓库。
+用户在 2026-10-26 明确暂缓三插件联合运行；不要把早期联合 Profile 的阶段性结果提升为最终联合验收通过。下一步仅维护本仓 README/HANDOFF 和原 PR，跨插件协作与公开发行留待后续版本。若仅改仓库根 README/HANDOFF，先核对 tarball 文件清单是否包含它们；包内内容变化时重新构建并记录 SHA。下方较早的待核描述是历史检查点。
 
-## 已完成
+## 最新检查点：Amadeus Life 1.0.0 产品化（2026-10-25）
 
-仓库创建、独立本地克隆、README 与本交接文档初始化。文档随本仓库提交并同步到远端。提交版本通过 git log 或主项目交付消息核对。
+- 版本 `1.0.0`；schema v9。新增原生 DSH Settings 导航 **Amadeus Life**、`./client` lazy-CJS 浏览器模块、统一权威 Config Schema/Config Forms（23 个扁平字段）、首次向导（Core/Autonomous/Local Activity）、Session allowlist/binding、意图/活动/预算/诊断页面。GUI 通过 owner-auth same-origin `/api/amadeus-life` 访问 Host，不直连 SQLite；活动只能 pause/resume/cancel，不能直接标记 completed。
+- 新增 `src/config-fields.js`、`src/config-schema.js`、`src/config.js`、`src/schema.js`、`src/http.js`、`src/client/`、`lib/client.js`、`scripts/build-client.mjs`。`scripts/life-setup.mjs` 输出改为与 Config Schema 一致的扁平字段；core 预设不创建身份。
+- `npm run package` 生成 `dist/amadeus-life-1.0.0.tgz`、SHA-256 与 `life-package.json`；包内仅含 Host/Client/Schema/locale/icon、用户文档、备份/构建脚本，不含数据库、测试、交接或 Creator 运行证据。
+- 确定性测试 **178** 项通过：quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5、productization 8、backup 7、privacy 2。Creator 沙箱 `node --test` 仍可能 runner `spawn EPERM`；`npm test` 与直接测试通过。
+- 未提交/推送、未安装到 profile、未改生产；真实隔离 DSH 的 GUI/tarball 安装/升级/v8→v9 冷迁移仍待 Codex 实机验收。
+- **REWORK_1**：真实 DSH 0.2.1-rc.3 中 Host API 200 但无设置入口/配置卡，根因是 DSH `dsh-settings` 只投影 volatile Config 字段；Life 23 字段原先全非 volatile，导致 `amadeus-life` 不进入 describe mirror、`whileServed` 不触发。已将全部字段标为 volatile，新增 `plugins.row.config`（`@amadeus/life#amadeus-life`）与 `plugins.detail.section` 基础卡，全部共用 ConfigForms/revision；运行语义明确为重启生效，不显示伪即时生效。新包 hash 见 REWORK_1_REPORT。
+- **REWORK_2**：实机出现 `settings.section` / `plugins.detail.section` 重复注册。根因是 `configForms.whileServed` 的 register 回调没有返回 disposer，mirror 同步/重载时重复调用 `ctx.slots.inject`/`register`。现两个注册路径都返回组合 disposer，fallback 也走 `ctx.effect`；PROD5 在双重同步下断言只注册 3 个贡献、卸载后全部清空。见 REWORK_2_REPORT。
+- **REWORK_3**：实机合法修改后保存按钮始终禁用。根因是 `validateField` 把 string/array 当 number，`hasErrors` 永真；现已按 boolean/number/string/array/enum 校验，补默认值、allowlist/idle/bootstrap/quiet-hour 交叉约束和逐字段可见错误，详情卡共用同一校验/revision；PROD6 回归默认配置与 75 合法修改。见 REWORK_3_REPORT。
 
-## 计划职责
+## 检查点：Life v1 final hardening / SQLite v9（2026-10-25）
 
-管理跨场景注意力、可调整的未来意图、活动调度、可选心跳与统一预算协调。
+- 同一 Creator 会话修复 Codex 五项最终回归：Session 撤销只影响本 Session 活动（同 Persona 的 A 保持 revision/lease/status）；Provider-managed 活动中央 transition 拒绝模型 failed/completed/cancel-confirm/pause/resume 并保留资源；Session Persona/Scene 禁止原地切换；共享视图使用跨场景字段 allowlist 并排除 legacy 无 scene 行；每 wake token 预留、官方 usage 幂等结算、Session/Persona/global 有效预算与 worker 竞争。
+- schema v9：v2–v8 增量迁移，新增 `provider_managed`、`tokens_reserved`、`token_reservations/token_reservation_scopes`；v6→v9、v7→v9、v8→v9 及失败回滚测试。确定性测试 161 项通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5）。
+- 新增离线单屏设置：`scripts/life-setup.mjs`（core/autonomous/activity，仅输出/写 JSON，不改 profile）与 `docs/SETUP.md`，默认自主投递和新工具关闭；autonomous/activity 预设含显式 `bootstrap`，首次加载创建稳定 Persona/private Scene/binding，重复加载幂等，冲突 fail closed；`--out` 仅 `wx` 新建文件。README/INSTALL/ADR 0008/十场景映射同步到 v9。
+- v8→v9 真实开发库冷备份迁移、隔离 DSH 生命周期、无输入唤醒与本地 Provider 活动、旧工具拒绝、预算拒绝、身份重绑拒绝、首次配置启动/重启均已通过；外部 Provider/付费未验收。Codex 标准 `node --test test/*.test.js` 为 161/161，`npm test` 十一组全通过。详见 [最终加固报告](docs/verification/FINAL_HARDENING_2026-10-25.md)。
 
-通过 QQ 的事件、排队和唤醒接口协作，不独立争抢 QQ 收发；到期重新考虑，不盲发旧台词。不依赖 State 或向量记忆运行。
+## 最新检查点：Life v1.0 预算边界 / SQLite v8（2026-10-25）
 
-## 下一步
+- 同一 Creator 会话补齐统一预算中的活动并发与付费预留：`budget_scopes.activity_limit` 在活动 INSERT 的同一 `BEGIN IMMEDIATE` 内检查 Session/Persona/global 有效上限；pending/running/paused/stopping/unknown 占名额，终态释放；模型工具与 trusted Host 共用检查，无 resource 不能绕过。
+- 新增受信任 `reserveCost/settleCost/releaseCost/getCostReservation`：按 scope/cost_limit 原子预留，幂等键、未知保持占用、负数/重复结算拒绝；没有真实支付 Provider，模型不可调用。
+- schema v8：v2–v7 增量迁移，新增 `cost_reservations`、`budget_scopes.activity_limit/cost_reserved`；失败回滚测试覆盖 v7→v8。确定性测试 137 项通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 24、life-v1 15、v1-budget 4）。v7→v8 真实开发库冷备份、完整性与历史表逐列摘要核验已通过；真实付费和平台仍未验收。
 
-在 M0 与基础契约核实后，确定意图账本、事件接口、revision、取消与预算语义；优先用模拟时钟验证。
+## 最新检查点：Life v1.0 最终闭环 / SQLite v7（2026-10-25）
 
-需求与验收关注：R-06、R-08、R-09、R-12、R-15、R-17；重点验收 A-06、A-11、A-14—A-16。
+- 同一 Creator 会话在现有工作树补齐实际调用路径：默认关闭、管理员启用后可用的 `life_activity_start/status/pause/resume/cancel/finish` 模型工具（身份/owner scope/Provider 由 Session binding 派生，完成/失败证据只由 Provider 返回）；`life_shared_read` 共享只读视图；`resource_lease` SQLite 部分唯一索引互斥；真实用户消息触发长活动 pause/checkpoint 或 unknown；官方 `assistant/message.usage` 按 Session+seq 幂等归账。
+- schema 升到 v7：v2–v6 增量迁移，新增 `usage_events` 与资源租约唯一索引；身份/idle/预算/Provider 数据保留。新自主功能默认关闭，原九个工具默认不变。
+- 确定性测试 131 项通过：quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 22、life-v1 15。新增 E12/E13/E14 覆盖意图关联校验、撤权期间 pending Provider start、迟到完成结果不复活；十场景映射与未验证清单见 `docs/verification/V1_TEN_SCENARIOS.md`。
+- 尚未提交/推送；真实隔离 DSH 的 v6→v7 迁移、无用户输入 idle、模型实际选择活动工具、真实用量字段和启停/恢复仍需 Codex 验收。`node --test` 在本沙箱仍有 runner `spawn EPERM`。
 
-先阅读 README、主仓库 HANDOFF、多仓库约定和相关规格章节。正式开发由 Codex 编写有明确路径、契约、验收和预算的任务包；DSH 使用隔离开发 home 和工作区，不继承生产账号、记忆或发布凭据。
+## 最新检查点：Life v1.0 能力实现 / SQLite v6（2026-10-25）
 
-## 未运行与限制
+- 同一 Creator 会话在现有 `codex/life-core` 工作树完成 v1.0 能力实现：统一身份（Persona/Scene/Session/Principal/Data Scope、显式共享与撤销失效）、idle 心跳（持久安静窗口/频率/预算/Host 共用 wake 机制）、统一自主预算、Activity Provider 契约与受控 `LocalVirtualProvider`、v5→v6 增量迁移。
+- 未新增模型工具（仍 9 个），身份/Provider/预算/idle 只作为 trusted Host service；没有真实平台外发、第二 Agent/模型循环或生产改动。
+- 确定性测试 121 项通过：quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 21、life-v1 6。v6 迁移、身份隔离/撤销、idle 投递、预算耗尽延迟、Provider 生命周期/崩溃均有测试；尚未提交/推送。
+- 下一段由 Codex 独立审查，并在真实隔离 DSH 做冷备份后的 v5→v6 迁移、无用户输入 idle、启停/恢复和十场景验收。当前 README 的 120 项为本地结果；`node --test` 在本沙箱仍有 runner `spawn EPERM`。
 
-- 未实施插件代码、构建、安装、升级、卸载或发布流程。
-- 未验证实际 DSH、QQ、NapCat、设备或其他平台兼容性。
-- 未运行本插件功能、契约、降级、权限或集成验收。
-- 当前无契约兼容版本、release 或可安装依赖组合。
-- 本仓库许可证未确定；任何第三方复用均须单独核查。
+## 最新检查点：SQLite v5 Host 消费接线（2026-10-25）
 
-文档初始化不能计为产品验收通过。保留可选依赖边界，授权失败时不放行受影响动作；不把计划、超时或取消请求记作完成。
+- Codex 先提交失败回归 `4f690c1`，原 cordis Creator 第 18/19 轮主要实现实时可信 Session 消费/turn-end 接线、pre-admission 持久 message ID、官方 `projections/page` 历史对账、schema v5 安全迁移及 ADR 0005。Codex 独立标准测试 113/113，`npm test` 六组 18/20/9/19/28/19 全通过，`git diff --check` 通过。
+- 真实隔离 Desktop 停机冷备份 v4 SQLite/WAL/SHM，逐文件哈希一致；重启后原开发库 v4→v5、integrity ok，10 intents、5 events、8 activities、1 wake、1 lease 全保留，旧字段逐表摘要一致。原 Creator Session 恢复。官方隔离 `session/projections` 与 `session/page` 只读实测请求成功、事件有序、分页无重叠；v5 自动 Host 唤醒/崩溃对账的完整真实运行尚未验收，不能据此称 v1.0 完成。
+- 下一轮按用户最新指示让同一 Creator 连续实现完整 v1.0 剩余能力，减少中间关卡；最终由 Codex 统一独立审查、测试和十场景隔离验收。以下 v4/v3 文字是历史检查点。
 
-## 本地同步
+## 最新检查点：SQLite v4 wake 消费证据（2026-10-25）
 
-在本仓库目录内查看 git status、git log 和 git remote -v；主项目不会代为跟踪本仓库文件。拉取与推送针对本仓库的 origin；主仓库的 plugins/ 被忽略，不使用 Git Submodule。
+- 原 cordis Creator 继续完成 v3→v4 增量迁移及可信 `recordWakeConsumed` / `recordWakeTurnEnd` / `getWakeConsumption`；消费时的意图有效性与 Session 消费/完成坐标分别保存，不增加模型工具。Codex 独立标准 `node --test` 为 100/100，`npm test` 六组均通过。
+- 真实隔离 Desktop 在原 Creator 空闲后停止，冷备份原 v3 SQLite/WAL/SHM 并校验哈希；重启后开发库为 schema 4、integrity ok。原 10 意图、5 事件、8 活动、1 wake、1 lease 保留，意图/事件/活动不可变字段与 wake 行均和备份一致；新增证据表空。原 Session 可读、Life bundle active、私有 Host 探针未加载。见 [v4 验收](docs/verification/WAKE_CONSUMPTION_V4_2026-10-25.md)。
+- 当前 Host adapter 尚未调用新证据接口，真实合成 wake 的旧 `superseded` 记录保持不动；下一段接入事件并对账 admitted/uncertain，随后继续 idle 与完整 v1.0。迟到的恢复证据若不能证明消费瞬间意图有效，只能保守记录消费，不能推断旧意图可执行。
+
+## 最新检查点：可信 Host 到期唤醒首段（2026-10-25）
+
+- 原 cordis Creator 实现管理员显式启用、Session allowlist、官方 `resolveAgent → followup → sessions.flush` 的 Life Host adapter；Codex 的跨 Session 伪证、500 行旧 wake 遮蔽、缺失事件监听、可选服务注入及服务撤销竞态回归均经同一 Creator 会话定点返工。独立标准 `node --test` 为 85/85，`npm test` 全部通过。
+- 真正的隔离 DSH Desktop 验收：先冷备份 profile 与 SQLite，仅临时允许已有合成 Session；首次发现普通 `ctx.get` 拿不到 Host 服务，修正为 Cordis 可选 `ctx.inject` 后真实投递成功。wake 先为 admitted；Session 持久日志含 `amadeus-life` 来源、匹配 message/wake ID、第 2 个 completed turn。模型只调用 `life_health`、`life_intent_list`、`life_intent_cancel`，自主取消该合成意图，无真实平台外发。取消使 wake 保守变 `superseded`；这证明真实消费但当前 ledger 未记 `executed`，消费与意图失效的区分需下一段修复。重复 drive 和重启均未重投。最后逐字节恢复原隔离 profile patch、撤销私有探针加载，原 Session/Workspace/SQLite 保留。见 [Host 首段验收](docs/verification/HOST_WAKE_SLICE_2026-10-25.md)。
+- 包仍标 0.1.0，当前只具备显式受控的到期意图唤醒，不含 idle、完整预算、统一身份、Provider 或 v1.0 十场景；继续原 Creator 会话迭代，不把此首段称为 v1.0 完成。
+
+## 最新检查点：SQLite v3 wake ledger（2026-10-25）
+
+- 原 cordis Creator 会话完成 v2→v3 增量迁移与 `intent_due` 持久 wake ledger；Codex 独立审查发现并先复现三项缺口（过期 admitted 状态回滚、非法 Session 形状候选饥饿、已确认本地事件仍可领取），同一 Creator 会话定点返工并增加 admission 竞争回归。`node --test test/wake-ledger.test.js test/quality-gaps.test.js test/life-core.test.js test/revision.test.js` 为 66/66，`npm test` 各文件 18+20+9+19 项通过，退出码均 0。
+- 在独立 Desktop 停止且原会话空闲后，已对原 `life.sqlite`、WAL、SHM 做本机忽略目录的冷备份并逐文件校验哈希；启动同一隔离 Desktop 后，真实开发库从 v2 到 v3，`PRAGMA integrity_check=ok`，9 意图、4 事件、8 活动与租约仍在。不可变业务字段与冷备份逐行摘要一致。原 Creator Session 可恢复，Life bundle active；无生产操作或真实平台外发。详见 [v3 验收](docs/verification/WAKE_LEDGER_V3_2026-10-25.md)。
+- `wake_requests` 目前只是可信持久准备、领取、准入与记录接口；尚未接入 Host 自动投递或真实 Session 执行证据。包版本仍 0.1.0；下一段实现 Host adapter，不能把本次 ledger 验收称为 Life 0.2.0 或 v1.0 完成。
+
+## 最新检查点：0.1.0 四项质量修复（2026-10-25）
+
+- 原 cordis Creator 会话继续完成主要实现；失败回归独立提交 `889be0a`，修复独立提交 `92fc18b`。Codex 审查中补充了多活动/单焦点和合法单向关联回归并交回同一会话返工。
+- `node --test test/quality-gaps.test.js test/life-core.test.js test/revision.test.js`：47/47 通过，exit 0；`npm test` 同样通过。原 29 项仍通过。详见 [质量修复验收](docs/verification/QUALITY_FIX_2026-10-25.md)。
+- 真实隔离 DSH 中服务与 9 工具加载、停用/启用、卸载/重装均通过；强制重启后持久意图保留，运行活动进入 `unknown`，不伪造完成。临时诊断探针已移除；原 Session、Workspace、SQLite 和开发包保留。
+- 包仍为 0.1.0，SQLite schema 2。尚无真正 DSH 自动唤醒、可信 Provider 回执协议、统一 Persona、注意力调度或预算；这些属于已授权的连续 Life v1.0 开发，下一步先形成 0.2.0 架构和真实 Session Controller 接入任务。下文旧交接记录是修复前状态，不覆盖此检查点。
+- 后续隔离 Host API 探针已证实：无人工新输入的 `sessionController.prompt` 能实际触发完成 turn，但来源记为 `user`；按官方 Schedule 范式构造完整 user-role 消息，以 `amadeus-life` 来源、wakeId、`resolveAgent → followup → sessions.flush` 可持久投递并完成 turn。初次探针遗漏 `role`/`id` 导致一个合成测试 Session 的 turn 失败，该 Session 原样保留；修正后新长期测试 Session 成功。私有探针已卸载。Life 代码尚未接入此能力，下一步是持久 wake ledger、权限/预算/过期检查和真实适配。主仓 `docs/verification/LIFE_HOST_WAKE_SMOKE_2026-10-25.md` 记录边界。
+
+日期：2026-10-25。状态：0.1.0 开发版核心已验收；尚未发布 release、npm 包或部署生产。
+
+## 当前能做什么
+
+SQLite schema v9 保存意图、活动、身份/绑定、idle、wake 证据、预算、usage 与受限 Provider 关系；支持 revision CAS、改期/取消、有界 tick、Host wake/idle（默认关闭）、统一预算、资源互斥和单运行时 lease。旧 v2–v8 库按增量迁移保留，不自动删除或替换。
+
+默认仍为原 9 个模型工具；管理员显式启用后才增加受控本地活动工具与共享只读工具。没有 QQ、Memory、State 或其他身体也能运行；无平台发送、真实 Provider 或支付。
+
+## 实际开发与验证
+
+- 独立官方 DSH Desktop 0.2.1-rc.3，使用隔离的本地开发工作区。
+- Creator 确实为 cordis，模型 deepseek-official / deepseek-flash，High；官方 1017 标签匹配已核实。
+- 主要实现与两轮具体修复复用同一持久 Creator 会话，无子 Agent；精确会话/工作区标识与恢复细节仅保存在被忽略的私有 handoff 中。
+- Codex 独立执行 node --test test/life-core.test.js test/revision.test.js：29 passed / 0 failed，exit 0。npm test 同样通过。
+- 真实 DSH 安装、禁用/启用、卸载/重装及独立开发进程强制重启后的持久恢复通过；9 个工具按生命周期撤销/恢复，原 Creator 实际创建、修改、取消、读取意图成功。
+- 原有 QQ Bridge、SnowLuma、生产 DSH 配置、登录资料与个人记忆均未修改；无真实平台发送。
+
+## 本地入口
+
+- 项目正常克隆：主项目 plugins/amadeus-life/。
+- 活跃开发实例使用被忽略的私有开发克隆；精确路径、DSH_HOME、认证、原始日志和临时探针均在私有 handoff/忽略区域，不得整体上传。
+- 分支 codex/life-core；远端 https://github.com/jeskoky-pixel/amadeus-life 。
+
+## 文档与证据
+
+- docs/INSTALL.md：实际安装/配置接口与公共服务语义。
+- docs/verification/REPORT.md：审查、测试、集成、预算与限制（已脱敏，无本机标识）。
+- docs/verification/creator-and-runtime.json：脱敏后的 Creator/模型、用量和集成阶段；精确本机标识在私有 handoff。
+- docs/verification/source-manifest.json：被验证源码的内容哈希；最终 SHA 见 PR/交付消息。
+- docs/adr/0001-life-runtime.md：为何研究 Schedule/Jobs 后选本地事务 outbox 与轻量 tick。
+
+## 下一步及限制
+
+1. 先以原 Creator 会话补齐 0.1.0 的四项质量缺口，先失败回归再修复，Codex 独立复测与真实开发宿主启停。完成后再规划 0.2.0，并持续朝 Life v1.0 迭代；不要把本地 outbox 当成已完成自动生活或外发。
+2. 未来 provider 在执行前重新检查 scope、revision 与最新授权；模型不得自行提供可信证据或授权字段。
+3. 更多故障点、多进程/多机器压力与真实平台能力另行验证。本轮只验证合成数据和独立开发环境。
+4. 插件许可证仍待拥有者明确，不自动继承主仓库 MIT；private=true 是 npm 防误发设置，GitHub 仓库保持公开。
+
+生产环境保护和仅开发 Life 的边界继续有效。
+
+## 账号切换交接（2026-10-25 实查）
+
+- 当前分支 `codex/life-core`；[PR #2](https://github.com/jeskoky-pixel/amadeus-life/pull/2)（codex/life-core，未合并）；[PR #1](https://github.com/jeskoky-pixel/amadeus-life/pull/1)（codex/m0-baseline，未合并）。交接前功能基线 `46064e0856fc980ddd2d3e10e5d46afa94e3862c`；本轮只更新交接/证据脱敏文档，源码未改。最新文档 SHA 用 `git log -1 --format=%H` 查询。
+- 原测试在交接轮独立重跑：29 passed / 0 failed，Node 22.23.2；既有测试并未覆盖全部下述漏洞。
+- Codex 已在独立临时数据库复现：`running → completed` 接受 `trustedEvidence:false` 与伪造引用；跨 scope 的 intentId 和 relatedActivityId 以及不存在 intentId 均被接受；公开 close 后即使调用旧 dispose，同进程重开仍 runtime_lease_held；2026-02-30 被归一化为 03-02。ADR 写 schema=1，源码常量为 2。**尚未修复，不得宣称可信 Provider 边界完整。**
+- 问题位置、影响边界、回归验收与后续任务：[QUALITY_GAPS.md](docs/verification/QUALITY_GAPS.md)。本轮没有执行此前要求的修复任务，也没有向 DSH 派发新任务。
+- 原 Creator 会话/工作区的精确标识、模型/权限、轮次与恢复信息仅保存在被忽略的私有 handoff；本文件只保留可公开的技术结论。
+- 共享契约为 QQ/Life `0.1-draft`，不是运行时总线兼容承诺。SQLite schema=2 与包 0.1.0 是不同版本轴。
+- 必读主仓库 [唯一接手入口](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/codex/life-development/docs/handoff/NEXT_CODEX_START.md)、[DSH 开发协议](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/codex/life-development/docs/handoff/DSH_DEVELOPMENT.md)。本机恢复见主项目忽略的 `private/handoff/`，不要公开其中内容。
+- 不新建整个项目、不丢弃旧会话/数据库、不动生产 SnowLuma/QQ/DSH，不用 Computer Use，不自动 merge/release。授权自动唤醒、Provider、跨会话身份与预算在质量修复后规划；其他插件不在当前开发范围。

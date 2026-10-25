@@ -1,0 +1,70 @@
+{
+  "name": "@amadeus/life",
+  "version": "1.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Amadeus Life: durable intents, activities, autonomous wake, budgets, and a native DSH settings page.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "src",
+    "lib",
+    "scripts/build-client.mjs",
+    "scripts/life-backup.mjs",
+    "scripts/life-setup.mjs",
+    "scripts/package.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "docs/USER_GUIDE.md",
+    "docs/INSTALL.md",
+    "docs/SETUP.md",
+    "docs/UPGRADE.md",
+    "docs/BACKUP.md",
+    "docs/BUILD.md",
+    "docs/RELEASE_NOTES.md"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=22.13.0",
+    "dsh": ">=0.2.1-rc.2"
+  },
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "test": "node test/quality-gaps.test.js && node test/life-core.test.js && node test/revision.test.js && node test/wake-ledger.test.js && node test/wake-host.test.js && node test/wake-consumption.test.js && node test/life-v1.test.js && node test/v1-budget.test.js && node test/final-hardening.test.js && node test/setup-script.test.js && node test/bootstrap.test.js && node test/productization.test.js && node test/backup.test.js && node test/package-privacy.test.js",
+    "test:node": "node --test test/*.test.js",
+    "check": "node scripts/build-client.mjs && node test/productization.test.js",
+    "backup": "node scripts/life-backup.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
+    "package": "node scripts/verify-package.mjs && node scripts/package.mjs"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "amadeus",
+    "life",
+    "intents",
+    "activities",
+    "autonomy"
+  ]
+}

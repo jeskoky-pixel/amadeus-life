@@ -1,0 +1,372 @@
+{
+  "date": "2026-10-25",
+  "task": "T-010",
+  "dshVersion": "0.2.1-rc.3",
+  "runtime": "independent official Desktop; not headless",
+  "workspace": "isolated local development workspace",
+  "agentPreset": "cordis",
+  "modelSelection": {
+    "lastUsed": {
+      "provider": "deepseek-official",
+      "model": "deepseek-flash",
+      "reasoningEffort": "high"
+    },
+    "next": {
+      "provider": "deepseek-official",
+      "model": "deepseek-flash",
+      "reasoningEffort": "high"
+    }
+  },
+  "releaseLabelEvidence": {
+    "provider": "deepseek-official",
+    "route": "deepseek-flash",
+    "catalogName": "DeepSeek-V4.1-Flash",
+    "officialClientBadge": "1017",
+    "immutableBackendBuildId": "not exposed by catalog"
+  },
+  "permissions": {
+    "sandbox": "workspace-write",
+    "approval": "never",
+    "productionProfileLoaded": false,
+    "qqLoginOrMemoryLoaded": false,
+    "fullAccessUsed": false
+  },
+  "startupSmoke": {
+    "createAssertDeleteTemporaryFile": true,
+    "temporaryFileRemoved": true
+  },
+  "developer": {
+    "mainImplementation": "DSH Creator",
+    "supervisor": "Codex",
+    "sameSessionReused": true,
+    "completedTurnReasons": [
+      {
+        "kind": "completed"
+      },
+      {
+        "kind": "completed"
+      },
+      {
+        "kind": "completed"
+      },
+      {
+        "kind": "completed"
+      },
+      {
+        "kind": "completed"
+      }
+    ],
+    "modelSteps": 82,
+    "childrenUsed": false,
+    "actualMutatedPaths": [
+      "DEVELOPMENT_SMOKE.md",
+      "HANDOFF.md",
+      "README.md",
+      "cordis.patch.yml",
+      "docs/adr/0001-life-runtime.md",
+      "icon.svg",
+      "locale/en.json",
+      "locale/zh.json",
+      "package.json",
+      "src/core.js",
+      "src/index.js",
+      "src/model.js",
+      "src/store.js",
+      "test/life-core.test.js",
+      "test/revision.test.js",
+      "test/t07-worker.js"
+    ]
+  },
+  "budget": {
+    "observedTokenUsage": {
+      "uncachedInputTokens": 96313,
+      "outputTokens": 141506,
+      "cacheReadTokens": 12036352,
+      "cacheWriteTokens": 0
+    },
+    "llmMilliseconds": 699223,
+    "monetaryCharge": "not verified; provider bill is authoritative",
+    "taskStepBudgets": {
+      "core": 40,
+      "revision1": 25,
+      "revision2": 6,
+      "finalToolSmoke": 7
+    },
+    "idleLifeTicksInvokeModel": false
+  },
+  "codexReview": {
+    "firstVersionTests": 20,
+    "revision1Tests": 28,
+    "finalTests": 29,
+    "securityReproductionBeforeFix": "extra scope overwrote trusted caller and modified victim intent",
+    "securityReproductionAfterFix": "rejected with LIFE_VALIDATION; victim unchanged",
+    "primaryCodeAccepted": true
+  },
+  "testCommand": "node --test test/life-core.test.js test/revision.test.js",
+  "testExitCode": 0,
+  "testsPassed": 29,
+  "testsFailed": 0,
+  "concurrentClaimTest": "two worker_threads synchronized over the same SQLite database",
+  "realModelToolCalls": [
+    {
+      "name": "life_health",
+      "isError": false,
+      "callIdAlias": 1
+    },
+    {
+      "name": "life_intent_create",
+      "isError": false,
+      "callIdAlias": 2
+    },
+    {
+      "name": "life_intent_update",
+      "isError": false,
+      "callIdAlias": 3
+    },
+    {
+      "name": "life_intent_cancel",
+      "isError": false,
+      "callIdAlias": 4
+    },
+    {
+      "name": "life_intent_get",
+      "isError": false,
+      "callIdAlias": 5
+    }
+  ],
+  "realModelToolFinalIntent": {
+    "status": "cancelled",
+    "revision": 3
+  },
+  "integration": {
+    "initial": {
+      "nonce": "initial-smoke",
+      "status": "passed",
+      "action": "smoke",
+      "lifePresent": true,
+      "toolsPresent": [
+        "life_intent_create",
+        "life_intent_get",
+        "life_intent_list",
+        "life_intent_update",
+        "life_intent_cancel",
+        "life_activity_record",
+        "life_activity_get",
+        "life_activity_transition",
+        "life_health"
+      ],
+      "results": [
+        "intent-created",
+        "revision-updated",
+        "scope-denial",
+        "due-review-and-deduplication",
+        "external-action-default-deny",
+        "activity-failure-is-not-completion",
+        "nine-real-registry-tools-present"
+      ],
+      "health": {
+        "state": "ok",
+        "schemaVersion": "2",
+        "startedAt": "2026-10-24T17:30:45.567Z",
+        "lastTickAt": "2026-10-24T17:31:36.482Z",
+        "lastTickError": null,
+        "tickCount": 52,
+        "counts": {
+          "intents": {
+            "active": 2,
+            "cancelled": 0
+          },
+          "activities": {
+            "pending": 0,
+            "running": 1,
+            "paused": 0,
+            "stopping": 0,
+            "completed": 0,
+            "failed": 1,
+            "cancelled": 0,
+            "unknown": 0
+          },
+          "events": {
+            "pending": 1,
+            "acknowledged": 0,
+            "superseded": 0
+          }
+        }
+      }
+    },
+    "after-disable": {
+      "nonce": "after-disable",
+      "action": "snapshot",
+      "lifePresent": false,
+      "toolsPresent": [],
+      "health": null
+    },
+    "after-reenable": {
+      "nonce": "after-reenable",
+      "status": "passed",
+      "action": "recover",
+      "lifePresent": true,
+      "toolsPresent": [
+        "life_intent_create",
+        "life_intent_get",
+        "life_intent_list",
+        "life_intent_update",
+        "life_intent_cancel",
+        "life_activity_record",
+        "life_activity_get",
+        "life_activity_transition",
+        "life_health"
+      ],
+      "results": [
+        "intent-persisted-after-reload",
+        "interrupted-activity-unknown-not-completed",
+        "nine-real-registry-tools-present"
+      ],
+      "health": {
+        "state": "ok",
+        "schemaVersion": "2",
+        "startedAt": "2026-10-24T17:33:16.878Z",
+        "lastTickAt": null,
+        "lastTickError": null,
+        "tickCount": 0,
+        "counts": {
+          "intents": {
+            "active": 2,
+            "cancelled": 0
+          },
+          "activities": {
+            "pending": 0,
+            "running": 0,
+            "paused": 0,
+            "stopping": 0,
+            "completed": 0,
+            "failed": 1,
+            "cancelled": 0,
+            "unknown": 1
+          },
+          "events": {
+            "pending": 1,
+            "acknowledged": 0,
+            "superseded": 0
+          }
+        }
+      }
+    },
+    "after-host-restart": {
+      "nonce": "after-host-restart",
+      "status": "passed",
+      "action": "recover",
+      "lifePresent": true,
+      "toolsPresent": [
+        "life_intent_create",
+        "life_intent_get",
+        "life_intent_list",
+        "life_intent_update",
+        "life_intent_cancel",
+        "life_activity_record",
+        "life_activity_get",
+        "life_activity_transition",
+        "life_health"
+      ],
+      "results": [
+        "intent-persisted-after-reload",
+        "interrupted-activity-unknown-not-completed",
+        "nine-real-registry-tools-present"
+      ],
+      "health": {
+        "state": "ok",
+        "schemaVersion": "2",
+        "startedAt": "2026-10-24T17:34:31.108Z",
+        "lastTickAt": "2026-10-24T17:34:41.164Z",
+        "lastTickError": null,
+        "tickCount": 10,
+        "counts": {
+          "intents": {
+            "active": 4,
+            "cancelled": 0
+          },
+          "activities": {
+            "pending": 0,
+            "running": 0,
+            "paused": 0,
+            "stopping": 0,
+            "completed": 0,
+            "failed": 2,
+            "cancelled": 0,
+            "unknown": 2
+          },
+          "events": {
+            "pending": 2,
+            "acknowledged": 0,
+            "superseded": 0
+          }
+        }
+      }
+    },
+    "after-uninstall": {
+      "nonce": "after-uninstall",
+      "action": "snapshot",
+      "lifePresent": false,
+      "toolsPresent": [],
+      "health": null
+    },
+    "after-reinstall": {
+      "nonce": "after-reinstall",
+      "status": "passed",
+      "action": "recover",
+      "lifePresent": true,
+      "toolsPresent": [
+        "life_intent_create",
+        "life_intent_get",
+        "life_intent_list",
+        "life_intent_update",
+        "life_intent_cancel",
+        "life_activity_record",
+        "life_activity_get",
+        "life_activity_transition",
+        "life_health"
+      ],
+      "results": [
+        "intent-persisted-after-reload",
+        "interrupted-activity-unknown-not-completed",
+        "nine-real-registry-tools-present"
+      ],
+      "health": {
+        "state": "ok",
+        "schemaVersion": "2",
+        "startedAt": "2026-10-24T17:41:01.774Z",
+        "lastTickAt": null,
+        "lastTickError": null,
+        "tickCount": 0,
+        "counts": {
+          "intents": {
+            "active": 4,
+            "cancelled": 1
+          },
+          "activities": {
+            "pending": 0,
+            "running": 0,
+            "paused": 0,
+            "stopping": 0,
+            "completed": 0,
+            "failed": 2,
+            "cancelled": 0,
+            "unknown": 2
+          },
+          "events": {
+            "pending": 2,
+            "acknowledged": 0,
+            "superseded": 0
+          }
+        }
+      }
+    }
+  },
+  "probeDisposed": true,
+  "notVerified": [
+    "real external providers / QQ / NapCat / browser / memory / state",
+    "automatic authorized DSH wake adapter",
+    "actual currency charge or production deployment",
+    "general host filesystem and network adversarial isolation"
+  ]
+}

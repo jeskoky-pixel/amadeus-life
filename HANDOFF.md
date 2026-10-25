@@ -4,8 +4,8 @@
 
 - 版本 `1.0.0`；schema v9。新增原生 DSH Settings 导航 **Amadeus Life**、`./client` lazy-CJS 浏览器模块、统一权威 Config Schema/Config Forms（23 个扁平字段）、首次向导（Core/Autonomous/Local Activity）、Session allowlist/binding、意图/活动/预算/诊断页面。GUI 通过 owner-auth same-origin `/api/amadeus-life` 访问 Host，不直连 SQLite；活动只能 pause/resume/cancel，不能直接标记 completed。
 - 新增 `src/config-fields.js`、`src/config-schema.js`、`src/config.js`、`src/schema.js`、`src/http.js`、`src/client/`、`lib/client.js`、`scripts/build-client.mjs`。`scripts/life-setup.mjs` 输出改为与 Config Schema 一致的扁平字段；core 预设不创建身份。
-- `npm run package` 生成 `dist/amadeus-life-1.0.0.tgz`、SHA-256 与 `life-package.json`；包内含 Host/Client/Schema/locale/icon/docs/test，不含数据库或私人数据。新增用户指南、升级/回滚、构建、发行说明。
-- 确定性测试 **167** 项通过：quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5、productization 6。Creator 沙箱 `node --test` 仍可能 runner `spawn EPERM`；`npm test` 与直接测试通过。
+- `npm run package` 生成 `dist/amadeus-life-1.0.0.tgz`、SHA-256 与 `life-package.json`；包内仅含 Host/Client/Schema/locale/icon、用户文档、备份/构建脚本，不含数据库、测试、交接或 Creator 运行证据。
+- 确定性测试 **178** 项通过：quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5、productization 8、backup 7、privacy 2。Creator 沙箱 `node --test` 仍可能 runner `spawn EPERM`；`npm test` 与直接测试通过。
 - 未提交/推送、未安装到 profile、未改生产；真实隔离 DSH 的 GUI/tarball 安装/升级/v8→v9 冷迁移仍待 Codex 实机验收。
 - **REWORK_1**：真实 DSH 0.2.1-rc.3 中 Host API 200 但无设置入口/配置卡，根因是 DSH `dsh-settings` 只投影 volatile Config 字段；Life 23 字段原先全非 volatile，导致 `amadeus-life` 不进入 describe mirror、`whileServed` 不触发。已将全部字段标为 volatile，新增 `plugins.row.config`（`@amadeus/life#amadeus-life`）与 `plugins.detail.section` 基础卡，全部共用 ConfigForms/revision；运行语义明确为重启生效，不显示伪即时生效。新包 hash 见 REWORK_1_REPORT。
 - **REWORK_2**：实机出现 `settings.section` / `plugins.detail.section` 重复注册。根因是 `configForms.whileServed` 的 register 回调没有返回 disposer，mirror 同步/重载时重复调用 `ctx.slots.inject`/`register`。现两个注册路径都返回组合 disposer，fallback 也走 `ctx.effect`；PROD5 在双重同步下断言只注册 3 个贡献、卸载后全部清空。见 REWORK_2_REPORT。
@@ -80,9 +80,9 @@ SQLite schema v9 保存意图、活动、身份/绑定、idle、wake 证据、�
 
 ## 实际开发与验证
 
-- 独立官方 DSH Desktop 0.2.1-rc.3，Workspace 为 Amadeus Life Development。
+- 独立官方 DSH Desktop 0.2.1-rc.3，使用隔离的本地开发工作区。
 - Creator 确实为 cordis，模型 deepseek-official / deepseek-flash，High；官方 1017 标签匹配已核实。
-- 会话 session-fa594d5f-9c84-4e51-aca1-f8ba8a3ee621；主要实现与两轮具体修复均复用此会话，无子 Agent。
+- 主要实现与两轮具体修复复用同一持久 Creator 会话，无子 Agent；精确会话/工作区标识与恢复细节仅保存在被忽略的私有 handoff 中。
 - Codex 独立执行 node --test test/life-core.test.js test/revision.test.js：29 passed / 0 failed，exit 0。npm test 同样通过。
 - 真实 DSH 安装、禁用/启用、卸载/重装及独立开发进程强制重启后的持久恢复通过；9 个工具按生命周期撤销/恢复，原 Creator 实际创建、修改、取消、读取意图成功。
 - 原有 QQ Bridge、SnowLuma、生产 DSH 配置、登录资料与个人记忆均未修改；无真实平台发送。
@@ -90,15 +90,14 @@ SQLite schema v9 保存意图、活动、身份/绑定、idle、wake 证据、�
 ## 本地入口
 
 - 项目正常克隆：主项目 plugins/amadeus-life/。
-- 活跃开发实例连接的独立克隆：主项目 private/life-development/workspace/amadeus-life/。
-- 独立 DSH_HOME / Electron 数据、认证、原始日志和临时探针保留在主项目被忽略的 private/life-development/，不得整体上传。临时探针已卸载清理，Life 保留安装供继续开发。
+- 活跃开发实例使用被忽略的私有开发克隆；精确路径、DSH_HOME、认证、原始日志和临时探针均在私有 handoff/忽略区域，不得整体上传。
 - 分支 codex/life-core；远端 https://github.com/jeskoky-pixel/amadeus-life 。
 
 ## 文档与证据
 
 - docs/INSTALL.md：实际安装/配置接口与公共服务语义。
-- docs/verification/REPORT.md：审查、测试、集成、预算与限制。
-- docs/verification/creator-and-runtime.json：实际 Creator/模型/工作空间、用量和集成阶段。
+- docs/verification/REPORT.md：审查、测试、集成、预算与限制（已脱敏，无本机标识）。
+- docs/verification/creator-and-runtime.json：脱敏后的 Creator/模型、用量和集成阶段；精确本机标识在私有 handoff。
 - docs/verification/source-manifest.json：被验证源码的内容哈希；最终 SHA 见 PR/交付消息。
 - docs/adr/0001-life-runtime.md：为何研究 Schedule/Jobs 后选本地事务 outbox 与轻量 tick。
 
@@ -117,7 +116,7 @@ SQLite schema v9 保存意图、活动、身份/绑定、idle、wake 证据、�
 - 原测试在交接轮独立重跑：29 passed / 0 failed，Node 22.23.2；既有测试并未覆盖全部下述漏洞。
 - Codex 已在独立临时数据库复现：`running → completed` 接受 `trustedEvidence:false` 与伪造引用；跨 scope 的 intentId 和 relatedActivityId 以及不存在 intentId 均被接受；公开 close 后即使调用旧 dispose，同进程重开仍 runtime_lease_held；2026-02-30 被归一化为 03-02。ADR 写 schema=1，源码常量为 2。**尚未修复，不得宣称可信 Provider 边界完整。**
 - 问题位置、影响边界、回归验收与后续任务：[QUALITY_GAPS.md](docs/verification/QUALITY_GAPS.md)。本轮没有执行此前要求的修复任务，也没有向 DSH 派发新任务。
-- 原 Creator 会话可读取：`session-fa594d5f-9c84-4e51-aca1-f8ba8a3ee621`，workspace `cde4653e-bea0-4285-b098-059003a3714c`；cordis / deepseek-official / deepseek-flash / high，workspace-write / never；5 轮 completed，82 steps，收件箱与用户问题为空。未新增有费模型请求测试账号切换。
+- 原 Creator 会话/工作区的精确标识、模型/权限、轮次与恢复信息仅保存在被忽略的私有 handoff；本文件只保留可公开的技术结论。
 - 共享契约为 QQ/Life `0.1-draft`，不是运行时总线兼容承诺。SQLite schema=2 与包 0.1.0 是不同版本轴。
 - 必读主仓库 [唯一接手入口](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/codex/life-development/docs/handoff/NEXT_CODEX_START.md)、[DSH 开发协议](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/codex/life-development/docs/handoff/DSH_DEVELOPMENT.md)。本机恢复见主项目忽略的 `private/handoff/`，不要公开其中内容。
 - 不新建整个项目、不丢弃旧会话/数据库、不动生产 SnowLuma/QQ/DSH，不用 Computer Use，不自动 merge/release。授权自动唤醒、Provider、跨会话身份与预算在质量修复后规划；其他插件不在当前开发范围。

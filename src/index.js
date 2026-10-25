@@ -13,7 +13,7 @@
  * no dependency graph and does not read another plugin's internals.
  */
 
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { LifeCore } from './core.js'
@@ -21,6 +21,7 @@ import { WakeHost } from './wake-host.js'
 import { Config } from './config-schema.js'
 import { isFlatConfig, normalizeLifeConfig, publicConfig } from './config.js'
 import { mountHttp } from './http.js'
+import { createBackup, listBackups } from './backup.js'
 import {
   LIFE_SCHEMA_VERSION,
   LifeError,
@@ -750,6 +751,11 @@ export function apply(ctx, config = {}) {
     listBudgets: () => core.v1.adminListBudgets(),
     cancelIntent: (id, expectedRevision) => core.v1.adminCancelIntent(id, expectedRevision),
     activityAction: (action, id) => core.v1.adminActivityAction(action, id),
+    createIntent: (options) => core.v1.adminCreateIntent(options),
+    startActivity: (options) => core.v1.adminStartActivity(options),
+    yieldActivities: (options) => core.v1.adminYieldActivities(options),
+    createBackup: () => createBackup({ databasePath }),
+    listBackups: () => listBackups(join(dirname(databasePath), 'backups')),
     bootstrap: (options) => core.v1.adminBootstrap(options),
     revokeBinding: (options) => core.v1.adminRevokeBinding(options),
   })

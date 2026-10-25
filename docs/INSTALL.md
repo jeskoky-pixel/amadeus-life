@@ -19,7 +19,7 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
 
 本轮用本地 link 安装源码；同时生成 `dist/amadeus-life-1.0.0.tgz`、SHA-256 与包元数据，没有 npm release。更新源码后先运行 `npm run build && npm test && npm run package`，再通过开发配置的管理器按其返回结果重新加载或重启。普通用户配置可直接用离线生成器：`node scripts/life-setup.mjs --preset core|autonomous|activity`（只输出 JSON，不改 profile）。
 
-安装后在 DSH Desktop 左下角 **设置** 的左侧导航中打开 **Amadeus Life**。页面提供总览、首次配置、Session/权限、意图、活动、预算和高级/诊断；常用参数直接保存到与 Plugin Manager 相同的 Config，部分字段需要重启。完整操作见 [用户指南](USER_GUIDE.md)。
+安装后在 DSH Desktop 左下角 **设置** 的左侧导航中打开 **Amadeus Life**。页面提供总览、首次配置、Session/权限、意图、活动、预算和高级/诊断；常用参数直接保存到与 Plugin Manager 相同的 Config，部分字段需要重启。完整操作见 [用户指南](USER_GUIDE.md)。升级/回滚和数据库备份见 [BACKUP](BACKUP.md) 与 [UPGRADE](UPGRADE.md)。
 
 ## 配置
 
@@ -28,11 +28,11 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
 ```yaml
 - id: amadeus-life
   config:
-    databasePath: C:/amadeus-dev-data/life.sqlite
+    databasePath: ""  # leave empty for DSH_HOME/amadeus-life/life.sqlite
     tickIntervalMs: 1000
     maxReviewBatch: 20
     wakeDeliveryEnabled: true
-    allowedSessionIds: [session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa]
+    allowedSessionIds: ["<session-id>"]
     bootstrapEnabled: true
     bootstrapPersonaName: Amadeus
 ```

@@ -9,6 +9,8 @@
 const PREFIX = '/api/amadeus-life'
 const MAX_BODY = 64 * 1024
 
+class BadRequestError extends Error {}
+
 /** @param {Record<string, any>} req */
 export function sameOrigin(req) {
   const host = String(req.headers?.host ?? '')
@@ -77,23 +79,23 @@ function send(res, status, payload) {
 
 async function readBody(req) {
   const type = String(req.headers?.['content-type'] ?? '').toLowerCase()
-  if (!type.startsWith('application/json')) throw new Error('POST requests require application/json')
+  if (!type.startsWith('application/json')) throw new BadRequestError('POST requests require application/json')
   let size = 0
   const chunks = []
   for await (const chunk of req) {
     size += chunk.length
-    if (size > MAX_BODY) throw new Error('request body is too large')
+    if (size > MAX_BODY) throw new BadRequestError('request body is too large')
     chunks.push(chunk)
   }
-  if (size === 0) throw new Error('request body is required')
+  if (size === 0) throw new BadRequestError('request body is required')
   let parsed
   try {
     parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
   } catch {
-    throw new Error('request body must be valid JSON')
+    throw new BadRequestError('request body must be valid JSON')
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('request body must be a JSON object')
+    throw new BadRequestError('request body must be a JSON object')
   }
   return parsed
 }
@@ -102,7 +104,7 @@ function intParam(url, name, fallback, min, max) {
   const raw = url.searchParams.get(name)
   if (raw === null) return fallback
   const value = Number(raw)
-  if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${name} is out of range`)
+  if (!Number.isInteger(value) || value < min || value > max) throw new BadRequestError(`${name} is out of range`)
   return value
 }
 
@@ -159,6 +161,36 @@ export function createHandler(controller) {
       if (req.method === 'GET' && path === '/wakes') {
         return send(res, 200, { ok: true, wakes: controller.listWakes({ limit: intParam(url, 'limit', 20, 1, 100) }) })
       }
+      if (req.method === 'GET' && path === '/backups') {
+        return send(res, 200, { ok: true, backups: controller.listBackups() })
+      }
+      if (req.method === 'POST' && path === '/backups') {
+        const result = controller.createBackup()
+        return send(res, 200, { ok: true, backup: result })
+      }
+      if (req.method === 'POST' && path === '/intents/create') {
+        const body = await readBody(req)
+        const result = controller.createIntent({
+          targetSessionId: body.targetSessionId,
+          description: body.description,
+          reviewAt: body.reviewAt,
+        })
+        return send(res, 200, { ok: true, intent: result })
+      }
+      if (req.method === 'POST' && path === '/activities/start') {
+        const body = await readBody(req)
+        const result = await controller.startActivity({
+          targetSessionId: body.targetSessionId,
+          description: body.description,
+          ...(body.intentId === undefined || body.intentId === '' ? {} : { intentId: body.intentId }),
+        })
+        return send(res, 200, { ok: true, activity: result })
+      }
+      if (req.method === 'POST' && path === '/attention/yield') {
+        const body = await readBody(req)
+        const result = await controller.yieldActivities({ targetSessionId: body.targetSessionId })
+        return send(res, 200, { ok: true, outcomes: result })
+      }
       if (req.method === 'POST' && path === '/bootstrap') {
         const body = await readBody(req)
         const sessionIds = Array.isArray(body.sessionIds) ? body.sessionIds : []
@@ -185,7 +217,8 @@ export function createHandler(controller) {
       }
       return send(res, 404, { ok: false, error: 'not found' })
     } catch (error) {
-      return send(res, statusFor(error), { ok: false, error: error instanceof Error ? error.message : String(error) })
+      const status = error instanceof BadRequestError ? 400 : statusFor(error)
+      return send(res, status, { ok: false, error: error instanceof Error ? error.message : String(error) })
     }
   }
 }

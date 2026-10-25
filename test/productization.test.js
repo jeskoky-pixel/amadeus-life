@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import vm from 'node:vm'
 import { Config } from '../src/index.js'
+import { LifeCore } from '../src/core.js'
 import { CONFIG_DEFAULTS, CONFIG_FIELDS } from '../src/config-fields.js'
 import { normalizeLifeConfig } from '../src/config.js'
 import { createHandler, mountHttp, sameOrigin } from '../src/http.js'
@@ -67,8 +69,12 @@ test('PROD2 built client is a compilable lazy module registering the native sett
   const bundlePath = join(process.cwd(), 'lib', 'client.js')
   assert.equal(existsSync(bundlePath), true, 'run npm run build first')
   const bundle = readFileSync(bundlePath, 'utf8')
-  for (const marker of ['settings.section', 'plugins.detail.section', 'plugins.row.config', 'configForms', 'amadeus-life', 'Amadeus Life']) {
+  for (const marker of ['settings.section', 'plugins.detail.section', 'plugins.row.config', 'configForms', 'amadeus-life', 'Amadeus Life',
+    'intents/create', 'activities/start', 'attention/yield', '/backups', 'createBackup']) {
     assert.match(bundle, new RegExp(marker.replace('.', '\\.')))
+  }
+  for (const tab of ['overview', 'setup', 'sessions', 'intents', 'activities', 'budget', 'advanced']) {
+    assert.match(bundle, new RegExp(`'${tab}'`))
   }
   assert.doesNotMatch(bundle, /^\s*import\s/m)
   let loaded
@@ -127,6 +133,11 @@ test('PROD3 admin API requires same-origin owner and exposes only bounded Life v
     listBudgets: () => [],
     cancelIntent: () => ({}),
     activityAction: async () => ({}),
+    createIntent: (input) => ({ description: input.description, targetSessionId: input.targetSessionId }),
+    startActivity: async (input) => ({ description: input.description, status: 'running' }),
+    yieldActivities: async () => ([{ outcome: 'already_paused' }]),
+    createBackup: () => ({ fileName: 'life-backup-test.sqlite', bytes: 1, sha256: 'a'.repeat(64) }),
+    listBackups: () => [],
     bootstrap: (input) => ({ state: 'ready', targets: input.targetSessionIds }),
     revokeBinding: () => ({}),
   }
@@ -149,6 +160,11 @@ test('PROD3 admin API requires same-origin owner and exposes only bounded Life v
   assert.equal(JSON.parse(res.body).health.schemaVersion, '9')
   assert.equal(JSON.parse(res.body).config.wakeDeliveryEnabled, false)
 
+  const boundedRes = response()
+  await owner({ ...getReq, url: '/api/amadeus-life/intents?limit=201' }, boundedRes)
+  assert.equal(boundedRes.status, 400)
+  assert.match(JSON.parse(boundedRes.body).error, /limit/)
+
   const postBody = JSON.stringify({ sessionIds: [A], personaName: 'Amadeus' })
   const postReq = {
     method: 'POST',
@@ -165,6 +181,41 @@ test('PROD3 admin API requires same-origin owner and exposes only bounded Life v
   await owner(postReq, postRes)
   assert.equal(postRes.status, 200)
   assert.deepEqual(JSON.parse(postRes.body).setup.targets, [A])
+
+  const makePost = (path, value) => ({
+    method: 'POST',
+    url: `/api/amadeus-life${path}`,
+    headers: postReq.headers,
+    async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(value)) },
+  })
+  const intentRes = response()
+  await owner(makePost('/intents/create', { targetSessionId: A, description: 'review this', reviewAt: '2099-01-01T00:00:00.000Z' }), intentRes)
+  assert.equal(intentRes.status, 200)
+  assert.equal(JSON.parse(intentRes.body).intent.description, 'review this')
+
+  const activityRes = response()
+  await owner(makePost('/activities/start', { targetSessionId: A, description: 'local work' }), activityRes)
+  assert.equal(activityRes.status, 200)
+  assert.equal(JSON.parse(activityRes.body).activity.status, 'running')
+
+  const yieldRes = response()
+  await owner(makePost('/attention/yield', { targetSessionId: A }), yieldRes)
+  assert.equal(yieldRes.status, 200)
+  assert.equal(JSON.parse(yieldRes.body).outcomes.length, 1)
+
+  const backupRes = response()
+  await owner(makePost('/backups', {}), backupRes)
+  assert.equal(backupRes.status, 200)
+  assert.equal(JSON.parse(backupRes.body).backup.fileName, 'life-backup-test.sqlite')
+
+  const malformedRes = response()
+  await owner({
+    ...postReq,
+    url: '/api/amadeus-life/intents/create',
+    async *[Symbol.asyncIterator]() { yield Buffer.from('{') },
+  }, malformedRes)
+  assert.equal(malformedRes.status, 400)
+  assert.match(JSON.parse(malformedRes.body).error, /valid JSON/)
 
   const missingMarker = createHandler(controller)
   const missingRes = response()
@@ -272,8 +323,126 @@ test('PROD6 config form draft/save/cancel/conflict operations are bounded and re
     { op: 'set', path: ['wakeDeliveryEnabled'], value: true },
   ])
   assert.equal(buildUnsetAllOps(CONFIG_FIELDS).length, CONFIG_FIELDS.length)
+  assert.deepEqual(buildUnsetAllOps(CONFIG_FIELDS)[0], { op: 'unset', path: ['wakeDeliveryEnabled'] })
+  // Defaults/reset are Config-form unset operations only; no Life data table
+  // mutation exists in this path.
   assert.equal(hasRevisionConflict(changed, { ...snapshot, revision: 5 }, CONFIG_FIELDS, true), true)
   assert.equal(isDirty(draftFromSnapshot(snapshot), snapshot, CONFIG_FIELDS), false)
+})
+
+test('PROD7 admin intent/activity/attention actions derive scope and fail closed after revoke', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'life-admin-actions-'))
+  const core = new LifeCore({ databasePath: join(dir, 'life.sqlite') })
+  try {
+    core.v1.bootstrapLocalIdentity({ targetSessionIds: [A] })
+    const intent = core.v1.adminCreateIntent({
+      targetSessionId: A,
+      description: 'GUI-created intent',
+      reviewAt: '2099-01-01T00:00:00.000Z',
+    })
+    assert.equal(intent.description, 'GUI-created intent')
+    const activity = await core.v1.adminStartActivity({ targetSessionId: A, description: 'GUI activity' })
+    assert.equal(activity.status, 'running')
+    assert.equal(activity.ownerScope, `session:${A}`)
+    const outcomes = await core.v1.adminYieldActivities({ targetSessionId: A })
+    assert.equal(Array.isArray(outcomes), true)
+    core.v1.adminRevokeBinding({ targetSessionId: A })
+    assert.throws(() => core.v1.adminCreateIntent({
+      targetSessionId: A,
+      description: 'must fail',
+      reviewAt: '2099-01-01T00:00:00.000Z',
+    }), /inactive|unauthorized/i)
+    await assert.rejects(core.v1.adminStartActivity({ targetSessionId: A, description: 'must fail' }), /inactive|unauthorized/i)
+    await assert.rejects(core.v1.adminYieldActivities({ targetSessionId: A }), /inactive|unauthorized/i)
+    assert.throws(() => core.v1.adminCreateIntent({
+      targetSessionId: 'not-a-session',
+      description: 'bad',
+      reviewAt: '2099-01-01T00:00:00.000Z',
+    }), /Session/)
+  } finally {
+    core.close()
+  }
+})
+
+test('PROD8 rendered preset labels keep 本地活动/Local activity while budget says 活动并发/Activity concurrency', () => {
+  const bundle = readFileSync(join(process.cwd(), 'lib', 'client.js'), 'utf8')
+  const renderSection = (lang, overrides) => {
+    let loaded
+    vm.runInNewContext(bundle, {
+      window: { __ModuleLoader__: { load(definition) { loaded = definition } } },
+      navigator: { language: lang },
+      console,
+    })
+    const sectionRefs = []
+    const React = {
+      createElement(type, props, ...children) {
+        return { type, props: { ...(props || {}), children: children.length === 1 ? children[0] : children } }
+      },
+      useState(initial) {
+        const index = React._stateIndex++
+        const value = overrides[index] === undefined ? initial : overrides[index]
+        return [value, () => {}]
+      },
+      useCallback(callback) { return callback },
+      useRef(value) { return { current: value } },
+      useEffect() {},
+      _stateIndex: 0,
+    }
+    const plugin = loaded.factory((name) => (name === 'react' ? React : {}))
+    const ctx = {
+      slots: {
+        inject(_name, callback) { callback() },
+        register(definition, component) {
+          sectionRefs.push({ definition, component })
+          return () => {}
+        },
+      },
+      configForms: {
+        whileServed(_namespaces, callback) { callback(); return () => {} },
+        get() { throw new Error('effect should not run in render test') },
+      },
+      effect(callback) { callback(); return () => {} },
+    }
+    plugin.apply(ctx)
+    const settings = sectionRefs.find((entry) => entry.definition.name === 'settings.section')
+    assert.ok(settings)
+    const element = settings.component()
+    const rendered = typeof element.type === 'function' ? element.type(element.props) : element
+    const strings = []
+    const buttons = []
+    const walk = (node) => {
+      if (node === null || node === undefined || typeof node === 'boolean') return
+      if (Array.isArray(node)) { node.forEach(walk); return }
+      if (typeof node === 'string' || typeof node === 'number') { strings.push(String(node)); return }
+      if (typeof node !== 'object') return
+      if (typeof node.type === 'function') { walk(node.type(node.props)); return }
+      if (node.type === 'button') {
+        const text = [].concat(node.props.children ?? []).flat(Infinity).filter((item) => typeof item === 'string' || typeof item === 'number').join('')
+        if (text) buttons.push(text)
+      }
+      walk(node.props?.children)
+    }
+    walk(rendered)
+    return { strings, buttons }
+  }
+
+  const snapshot = { status: 'ready', revision: 1, writable: true, value: { ...CONFIG_DEFAULTS } }
+  const draft = { values: { ...CONFIG_DEFAULTS, activityLimit: 3 }, writable: true, status: 'ready', revision: 1 }
+  const health = { health: { state: 'ok' }, config: {}, setup: { state: 'ready' }, budgets: [] }
+  const zh = renderSection('zh-CN', ['setup', snapshot, draft, health])
+  assert.ok(zh.buttons.includes('仅核心管理'))
+  assert.ok(zh.buttons.includes('自主唤醒'))
+  assert.ok(zh.buttons.includes('本地活动'))
+  assert.equal(zh.buttons.includes('活动并发'), false)
+  const zhOverview = renderSection('zh-CN', ['overview', snapshot, draft, health])
+  assert.ok(zhOverview.strings.some((text) => text.includes('活动并发: 3')))
+  const en = renderSection('en-US', ['setup', snapshot, draft, health])
+  assert.ok(en.buttons.includes('Core only'))
+  assert.ok(en.buttons.includes('Autonomous wake'))
+  assert.ok(en.buttons.includes('Local activity'))
+  assert.equal(en.buttons.includes('Activity concurrency'), false)
+  const enOverview = renderSection('en-US', ['overview', snapshot, draft, health])
+  assert.ok(enOverview.strings.some((text) => text.includes('Activity concurrency: 3')))
 })
 
 test('PROD4 package manifest includes Host, client, schema, locale, docs, and explicit version', () => {

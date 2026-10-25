@@ -24,6 +24,7 @@ const V7_TABLES = [...V6_TABLES, 'usage_events']
 const V8_TABLES = [...V7_TABLES, 'cost_reservations']
 const V9_TABLES = [...V8_TABLES, 'token_reservations', 'token_reservation_scopes']
 const REQUIRED_TABLES = V9_TABLES
+export const LIFE_REQUIRED_TABLES = Object.freeze([...REQUIRED_TABLES])
 
 const WAKE_TABLE_SQL = `
 CREATE TABLE wake_requests (

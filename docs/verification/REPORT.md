@@ -9,8 +9,8 @@
 ## 开发环境与执行方式
 
 - 官方 DSH Desktop / CLI：0.2.1-rc.3；独立 DSH_HOME、Electron userData 和 Life Git 克隆，不是生产工作空间，也不是 headless 开发。
-- Workspace：Amadeus Life Development；精确路径见 creator-and-runtime.json。
-- 会话：session-fa594d5f-9c84-4e51-aca1-f8ba8a3ee621；5 轮均以持久 turn/end completed 结束，同一会话完成启动、实现、两次返工和真实工具检查。
+- Workspace：隔离的本地 Amadeus Life Development 开发工作区；精确本机路径、工作区标识与会话 ID 仅保存在被忽略的私有 handoff，不进入本报告或发布包。
+- 会话：同一持久 Creator 会话完成启动、实现、两次返工和真实工具检查；精确会话 ID 见私有 handoff。
 - 真实 preset：cordis。依据为 session/create 返回及 session/projections，而非 worker 自述。
 - 实际 Provider / Route：deepseek-official / deepseek-flash，High。官方模型目录为 DeepSeek-V4.1-Flash，与安装版官方 1017 标签匹配规则一致；目录不暴露不可变后端 build ID，不伪造额外版本证明。
 - 权限：Workspace Write / approval never。没有改为 Full Access。安装由监督方调用已认证的正式 Plugin Manager API 完成，不要求开发 Agent 提升权限。
@@ -56,7 +56,7 @@ Creator 的 Windows 文件沙箱会拒绝 node --test runner 的子进程 spawn�
 
 ## 可观察预算与证据
 
-creator-and-runtime.json 记录实际会话 tokenUsage、模型步骤、持续时间、工具结果、修改范围和各集成阶段。初始实现 40 步、首次修订 21 步、权限修订 6 步；包括两次启动/工具检查共 82 步，无模型子代理。
+creator-and-runtime.json 记录脱敏后的实际会话 tokenUsage、模型步骤、持续时间、工具结果、修改范围和集成阶段。初始实现 40 步、首次修订 21 步、权限修订 6 步；包括两次启动/工具检查共 82 步，无模型子代理。
 
 记录的是供应商返回的 token 用量，不把缓存输入当免费，也不以猜测价格声称实际扣费；货币金额未读取账单核实。Life 空 tick 不发起推理请求。
 

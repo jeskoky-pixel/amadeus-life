@@ -2,7 +2,7 @@
 
 管理跨场景注意力、可调整的未来意图、活动调度、可选心跳与统一预算协调。
 
-**当前状态：Amadeus Life 1.0.0 产品化工作树，SQLite schema v9；167 项确定性测试通过。原生 DSH Settings 独立入口、Config Schema/Forms、首次向导、Session/意图/活动/预算/诊断页面与版本化 tarball 已实现。真实隔离 DSH 的浏览器 GUI、tarball 安装/升级与 v8→v9 冷迁移仍由 Codex 验收；v7→v8 与 v8→v9 的隔离开发库迁移此前已通过。付费能力仅有受信任本地账本，真实平台与支付未验收。尚未公开发布。**
+**当前状态：Amadeus Life 1.0.0 产品化工作树，SQLite schema v9；178 项确定性测试通过。原生 DSH Settings 独立入口、Config Schema/Forms、首次向导、Session/意图/活动/预算/诊断页面、意图创建/活动启动/注意力让位、备份/恢复与版本化 tarball 已实现。真实隔离 DSH 的浏览器 GUI、tarball 安装/升级与 v8→v9 冷迁移仍由 Codex 验收；v7→v8 与 v8→v9 的隔离开发库迁移此前已通过。付费能力仅有受信任本地账本，真实平台与支付未验收。尚未公开发布。**
 
 项目入口：[Amadeus-dsh](https://github.com/jeskoky-pixel/Amadeus-dsh)。开发顺序：P0。仓库已于 2026-10-25 根据用户要求公开，便于网页端审阅。
 
@@ -96,7 +96,7 @@ npm test
 node test/life-v1.test.js
 ```
 
-当前结果：167 个确定性测试全部通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5、productization 6）。覆盖 v2→v9/v3→v9/v4→v9/v5→v9/v6→v9/v7→v9/v8→v9 迁移与回滚、Host 消费证据与重启对账、身份隔离/撤销、idle 资格与投递、预算边界与共享 Persona/global token 预留、虚拟 Provider 生命周期与崩溃、资源互斥、用户消息优先暂停、共享只读视图、活动并发、付费预留、Session 撤销隔离、Provider 权限、重绑禁止、wakeId 幂等、首次运行 bootstrap、Config Schema/Forms/客户端注册、表单保存/取消/冲突、重复注册幂等/卸载清理、owner-auth HTTP 与包清单。十场景映射见 [V1_TEN_SCENARIOS](docs/verification/V1_TEN_SCENARIOS.md)。Creator 沙箱的 `node --test` 仍有 runner `spawn EPERM` 限制；`npm test` 与直接测试文件通过。
+当前结果：178 个确定性测试全部通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5、productization 8、backup 7、privacy 2）。覆盖 v2→v9/v3→v9/v4→v9/v5→v9/v6→v9/v7→v9/v8→v9 迁移与回滚、Host 消费证据与重启对账、身份隔离/撤销、idle 资格与投递、预算边界与共享 Persona/global token 预留、虚拟 Provider 生命周期与崩溃、资源互斥、用户消息优先暂停、共享只读视图、活动并发、付费预留、Session 撤销隔离、Provider 权限、重绑禁止、wakeId 幂等、首次运行 bootstrap、Config Schema/Forms/客户端注册、表单保存/取消/冲突、重复注册幂等/卸载清理、owner-auth HTTP、admin intent/activity/attention 权限、SQLite 一致快照/原子恢复/预检回滚、包清单。十场景映射记录保留在仓库内，不随安装包分发。Creator 沙箱的 `node --test` 仍有 runner `spawn EPERM` 限制；`npm test` 与直接测试文件通过。
 
 
 
@@ -109,19 +109,14 @@ node test/life-v1.test.js
 
 ## 开发入口
 
-- [HANDOFF.md](HANDOFF.md)：当前状态、下一步与未运行检查。
-- [运行时 ADR](docs/adr/0001-life-runtime.md)：API 调研、存储/定时/事件/降级决策。
-- [v1 身份/idle/Provider ADR](docs/adr/0006-life-v1-identity-idle-budget-provider.md)
 - [单屏设置](docs/SETUP.md)：三种预设、Session 选择/allowlist、admin 绑定、健康错误与 Advanced。
 - [用户指南](docs/USER_GUIDE.md)：安装、DSH 设置页、首次向导、保存/重启、备份与限制。
-- [升级/回滚](docs/UPGRADE.md)、[构建打包](docs/BUILD.md)、[发行说明](docs/RELEASE_NOTES.md)。
-- [v8 活动并发/付费预留 ADR](docs/adr/0007-activity-concurrency-paid-reservation.md)
-- [v9 最终加固 ADR](docs/adr/0008-life-v1-final-hardening.md)
-- [M0 模块边界](docs/M0.md)
-- [QQ ↔ Life 契约草案](docs/contracts/qq-life-v0.1.md)
+- [升级/回滚](docs/UPGRADE.md)、[SQLite 备份/恢复](docs/BACKUP.md)、[构建打包](docs/BUILD.md)、[发行说明](docs/RELEASE_NOTES.md)。
 - [总体规格](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/main/docs/AMADEUS_SPEC.md)
 - [多仓库约定](https://github.com/jeskoky-pixel/Amadeus-dsh/blob/main/docs/ARCHITECTURE.md)
 
+仓库内的 HANDOFF、ADR、研究记录和验收证据保留给开发/审查使用，不随安装包分发；安装包只包含运行代码、用户文档、备份/构建脚本、locale、图标和 patch。
+
 ## 发布与隐私
 
-安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)；本轮完整验收见 [最终加固报告](docs/verification/FINAL_HARDENING_2026-10-25.md)。许可证尚待明确。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。
+安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)。许可证尚待明确。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。

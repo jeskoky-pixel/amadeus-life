@@ -5,7 +5,8 @@
 - Native DSH Settings navigation entry **Amadeus Life**, built as a lazy browser module (`./client`).
 - One authoritative Config schema shared by the Settings page and Plugin Manager form: 23 volatile fields covering autonomous wake, allowlist, idle, budget, activity tools, shared read, bootstrap, tick/batch, database path, and quiet hours. Volatility is required by DSH `dsh-settings` to serve the namespace; runtime apply is restart-scoped and explicitly labeled.
 - First-run wizard for Core only / Autonomous wake / Local activity; explicit admin `bootstrap` creates a stable Persona and private Scene/binding per Session, idempotently, and fails closed on conflicting identity.
-- Overview, Session/permission management, intent review/cancel, activity pause/resume/cancel, budget reservations, and diagnostics.
+- Overview, Session/permission management, intent creation/review/cancel, local activity start/pause/resume/cancel, attention yield, budget reservations, and diagnostics.
+- Consistent SQLite snapshot backup from the GUI/CLI; verified dry-run and atomic restore with preserved pre-restore files (see `BACKUP.md`).
 - Owner-authenticated same-origin admin API under `/api/amadeus-life`; browser code never opens SQLite. Writes require the Life marker header.
 - Versioned tarball, SHA-256 metadata, backup/upgrade/rollback guidance, and user guide.
 
@@ -22,6 +23,21 @@
 - `LIFE_SCHEMA_VERSION = '9'`; v2–v8 migrate incrementally, preserving rows and history.
 - Host wake/activity/budget APIs remain independent of the new GUI.
 - The client is optional: if Settings/webServer is absent, the Host plugin still runs and health reports delivery degradation where applicable.
+
+## Release / install checklist
+
+```powershell
+npm run build
+npm test
+npm run package
+Get-FileHash dist/amadeus-life-1.0.0.tgz -Algorithm SHA256
+```
+
+Install the tarball only through Plugin Manager in an isolated DSH Profile,
+then complete the first-run flow in **Settings → Amadeus Life**. Back up the
+database before upgrades; restore only while the plugin is stopped. The package
+is private/`UNLICENSED`; no public release, license choice, publish, or
+production deployment is made by these commands.
 
 ## Known limitations
 

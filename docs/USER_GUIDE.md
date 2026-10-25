@@ -4,9 +4,12 @@ Amadeus Life is a DSH Desktop plugin for durable intents, activities, optional a
 
 ## Install and open
 
-1. In DSH Plugin Manager, install `dist/amadeus-life-1.0.0.tgz` (or the package directory) through the normal administrator install flow. Do not hand-edit a production profile.
-2. Open **DSH Settings**. The left navigation contains **Amadeus Life**.
-3. The page works while the plugin is active; if the Host settings API is unavailable, it shows a clear disconnected/error state instead of pretending data exists.
+1. In DSH Plugin Manager, choose **Add plugin**, enter/paste the local tarball path `dist/amadeus-life-1.0.0.tgz`, install, and enable the resulting **Amadeus Life** row. Do not hand-edit a production profile.
+2. Wait for the bundle to report installed/enabled. A Host 200 alone is not enough; verify the page and console.
+3. Open **DSH Settings**. The left navigation contains **Amadeus Life / Amadeus 生活**. The label follows the browser UI language (Chinese is preferred when available).
+4. The page works while the plugin is active; if the Host settings API is unavailable, it shows a clear disconnected/error state instead of pretending data exists.
+
+To disable/re-enable later, use the same Plugin Manager switch. Disabling stops timers and closes SQLite but keeps the database; re-enabling with the same config restores the durable intents, activities, budgets, and bindings. Uninstalling the package does not delete the database.
 
 ## First run (no manual JSON)
 
@@ -24,13 +27,21 @@ All authoritative fields are volatile Config forms so DSH serves the `amadeus-li
 
 ## Pages
 
-- **Overview** — health, setup state, Session/intents/activity counts, recent wakes and errors.
+- **Overview** — health, setup state, intent/activity counts, wake-policy summary, recent wakes and errors.
 - **First run** — safe presets, Session allowlist, common options.
-- **Sessions & permissions** — configured allowlist and existing bindings; explicit revoke. Life does not enumerate or invent Sessions, so copy ids from DSH.
-- **Intents** — review due-time/status and cancel with revision CAS.
-- **Activities** — status and pause/resume/cancel through the Provider boundary. The GUI never marks a running Provider activity completed.
+- **Sessions & permissions** — configured allowlist and bindings; **Yield to user** for attention; explicit revoke. Life does not enumerate or invent Sessions.
+- **Intents** — create a durable intent for an authorized Session, choose a review time, and cancel with revision CAS.
+- **Activities** — start a local virtual activity, then status/pause/resume/cancel through the Provider boundary. The GUI never marks a running Provider activity completed.
 - **Budget** — wake/token/cost reservations and activity concurrency. Cost is a trusted reservation ledger; no payment Provider is installed.
-- **Advanced & diagnostics** — tick/batch/database/quiet-hour fields, schema/health, database location. Editing the DB path requires restart.
+- **Advanced & diagnostics** — tick/batch/database/quiet-hour fields, schema/health, database location, and **Back up now** (consistent snapshot; restore is a stopped-plugin CLI flow). Editing the DB path requires restart.
+
+## Validation and feedback
+
+- Every field shows its default, allowed range, and unit where applicable.
+- Invalid numbers, strings, arrays, Session ids, and cross-field combinations are highlighted with a specific reason; **Save** is disabled only while a visible validation error exists.
+- **Save**, **Cancel**, and **Restore defaults** are available with conflict feedback. Restore defaults only unsets configuration; it never deletes intents, activities, bindings, budgets, or history.
+- Revoke, intent cancel, activity cancel, attention yield, and restore defaults ask for confirmation where they change runtime state.
+- Focus rings, disabled/loading/error states, scrollable tables, and a narrow-window layout are supported; no credential or database content is sent to the model.
 
 ## Saving
 
@@ -41,7 +52,7 @@ All authoritative fields are volatile Config forms so DSH serves the `amadeus-li
 
 ## Backup, upgrade, rollback
 
-Back up the database (and any `-wal`/`-shm` files) before upgrading. v2–v8 databases are migrated incrementally to v9; no database is reset or replaced. Roll back by reinstalling the prior package and restoring the backed-up database. See [UPGRADE](UPGRADE.md).
+Back up the database (and any `-wal`/`-shm` files) before upgrading. Use the GUI **Back up now** button for a consistent snapshot, or the CLI commands in [BACKUP](BACKUP.md). v2–v8 databases are migrated incrementally to v9; no database is reset or replaced. Roll back by reinstalling the prior package and restoring the backed-up database with the documented dry-run/atomic restore flow. See [BACKUP](BACKUP.md) and [UPGRADE](UPGRADE.md).
 
 ## Boundaries
 

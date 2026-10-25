@@ -1128,6 +1128,56 @@ export class LifeV1 {
   }
 
   /**
+   * @param {{targetSessionId: string, description: string, reviewAt: string}} input
+   * @returns {Record<string, unknown>} created intent view.
+   */
+  adminCreateIntent({ targetSessionId, description, reviewAt } = {}) {
+    const target = requireString(targetSessionId, 'targetSessionId', 200)
+    if (!isDshSessionScope(`session:${target}`)) throw new LifeValidationError('targetSessionId must be a DSH Session id')
+    const binding = this.getSessionBinding(target)
+    if (!binding.active) throw new LifeUnauthorizedError('Session binding is inactive', { targetSessionId: target })
+    const scope = `session:${target}`
+    const intent = this.core.createIntent({
+      description,
+      reviewAt,
+      contextScope: scope,
+      authorizationRef: `admin:settings:${binding.revision}`,
+    })
+    return this.core.getIntent(intent.id, { scope })
+  }
+
+  /**
+   * Start the local virtual Provider activity for an active Session binding.
+   * @param {{targetSessionId: string, description: string, intentId?: string}} input
+   */
+  async adminStartActivity({ targetSessionId, description, intentId } = {}) {
+    const target = requireString(targetSessionId, 'targetSessionId', 200)
+    if (!isDshSessionScope(`session:${target}`)) throw new LifeValidationError('targetSessionId must be a DSH Session id')
+    const binding = this.getSessionBinding(target)
+    if (!binding.active) throw new LifeUnauthorizedError('Session binding is inactive', { targetSessionId: target })
+    return this.startActivity({
+      description,
+      ownerScope: `session:${target}`,
+      providerId: 'local-virtual',
+      ...(intentId === undefined ? {} : { intentId }),
+      personaId: binding.personaId,
+      sceneId: binding.sceneId,
+    })
+  }
+
+  /**
+   * Give a real user turn priority over this Session's long activities.
+   * @param {{targetSessionId: string}} input
+   */
+  async adminYieldActivities({ targetSessionId } = {}) {
+    const target = requireString(targetSessionId, 'targetSessionId', 200)
+    if (!isDshSessionScope(`session:${target}`)) throw new LifeValidationError('targetSessionId must be a DSH Session id')
+    const binding = this.getSessionBinding(target)
+    if (!binding.active) throw new LifeUnauthorizedError('Session binding is inactive', { targetSessionId: target })
+    return this.yieldActivitiesToUser({ targetSessionId: target })
+  }
+
+  /**
    * @param {{targetSessionId: string}} input
    * @returns {Record<string, unknown>} revoked binding.
    */

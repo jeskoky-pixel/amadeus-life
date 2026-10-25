@@ -1,5 +1,11 @@
 # amadeus-life 交接
 
+## 最新状态（2026-10-26）
+
+Life 1.0.0 的主要实现和定点返工由原持续 DSH Creator 会话完成。Codex 独立 178/178 测试通过；用户版 README 更新后重建的候选包 `amadeus-life-1.0.0.tgz` SHA-256 为 `6b9ef52fa1b1dfafb80a2ac4d9fc5a70e8d7d23e0104b259b2d0b0e3167f2654`。全新隔离官方 DSH Desktop 对同一运行时代码通过七页设置、首次配置、本地合成意图与活动、GUI 参数保存/校验、备份恢复、硬重启以及停启/卸载重装与数据保留。公开证据见 `docs/verification/FINAL_DESKTOP_PRODUCTIZATION_2026-10-25.md`。原 PR #2 保持 OPEN；未合并、未公开发行、未部署生产、未连接真实平台或支付 Provider。
+
+用户在 2026-10-26 明确暂缓三插件联合运行；不要把早期联合 Profile 的阶段性结果提升为最终联合验收通过。下一步仅维护本仓 README/HANDOFF 和原 PR，跨插件协作与公开发行留待后续版本。若仅改仓库根 README/HANDOFF，先核对 tarball 文件清单是否包含它们；包内内容变化时重新构建并记录 SHA。下方较早的待核描述是历史检查点。
+
 ## 最新检查点：Amadeus Life 1.0.0 产品化（2026-10-25）
 
 - 版本 `1.0.0`；schema v9。新增原生 DSH Settings 导航 **Amadeus Life**、`./client` lazy-CJS 浏览器模块、统一权威 Config Schema/Config Forms（23 个扁平字段）、首次向导（Core/Autonomous/Local Activity）、Session allowlist/binding、意图/活动/预算/诊断页面。GUI 通过 owner-auth same-origin `/api/amadeus-life` 访问 Host，不直连 SQLite；活动只能 pause/resume/cancel，不能直接标记 completed。

@@ -171,7 +171,7 @@ test('BOOT3 core preset creates nothing and generator output is accepted', () =>
   }
 
   const generated = buildSetup({ preset: 'autonomous', sessions: [A] })
-  assert.equal(generated.config.bootstrap.enabled, true)
+  assert.equal(generated.config.bootstrapEnabled, true)
   assert.equal(validateSetup(generated.config), true)
   const generatedHost = fakeCtx()
   apply(generatedHost.ctx, {
@@ -188,19 +188,19 @@ test('BOOT4 invalid config is rejected and output files are exclusive', () => {
   assert.throws(
     () => apply(fakeCtx().ctx, {
       databasePath: join(tempDir(), 'invalid.sqlite'),
-      bootstrap: { enabled: true },
-      wakeDelivery: { enabled: false, allowedSessionIds: [] },
+      bootstrapEnabled: true,
+      allowedSessionIds: [],
     }),
-    /bootstrap\.enabled requires/,
+    /bootstrapEnabled/,
   )
   assert.throws(
-    () => validateSetup({ bootstrap: { enabled: true } }),
-    /bootstrap\.enabled requires/,
+    () => validateSetup({ bootstrapEnabled: true, allowedSessionIds: [] }),
+    /bootstrapEnabled/,
   )
   const dir = tempDir()
   const path = join(dir, 'life-config.json')
   writeSetupFile(path, buildSetup({ preset: 'core' }).config)
   assert.throws(() => writeSetupFile(path, buildSetup({ preset: 'core' }).config), /refusing to overwrite/)
   const before = readFileSync(path, 'utf8')
-  assert.match(before, /wakeDelivery/)
+  assert.match(before, /wakeDeliveryEnabled/)
 })

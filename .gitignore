@@ -9,6 +9,9 @@
 /memory/
 /profiles/
 node_modules/
+dist/
+.npm-cache/
+*.log
 
 # Local SQLite runtime files and evidence stay out of Git.
 *.sqlite

@@ -948,7 +948,7 @@ test('H16 delayed optional injection binds, withdraws, and rebinds without dupli
 
   host.disposers.forEach((dispose) => dispose())
   assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 0)
-  assert.equal(injectionDisposals, 1)
+  assert.equal(injectionDisposals, 2)
 })
 
 test('H15 optional Cordis injection exposes Host services absent from plain ctx.get', async () => {
@@ -957,6 +957,7 @@ test('H15 optional Cordis injection exposes Host services absent from plain ctx.
   const host = fakeHost()
   host.ctx.get = () => undefined
   host.ctx.inject = (names, callback) => {
+    if (names[0] === 'webServer') return callback({})
     assert.deepEqual(names, ['sessionController', 'sessions'])
     callback({
       sessionController: host.ctx.sessionController,

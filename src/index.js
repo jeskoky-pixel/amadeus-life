@@ -18,6 +18,9 @@ import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { LifeCore } from './core.js'
 import { WakeHost } from './wake-host.js'
+import { Config } from './config-schema.js'
+import { isFlatConfig, normalizeLifeConfig, publicConfig } from './config.js'
+import { mountHttp } from './http.js'
 import {
   LIFE_SCHEMA_VERSION,
   LifeError,
@@ -28,6 +31,8 @@ import {
   isDshSessionScope,
   requireString,
 } from './model.js'
+
+export { Config }
 
 /** Cordis plugin name. */
 export const name = 'amadeus-life'
@@ -416,6 +421,9 @@ export function apply(ctx, config = {}) {
   if (typeof config !== 'object' || config === null) {
     throw new LifeValidationError('amadeus-life config must be an object')
   }
+  const suppliedConfig = config
+  config = normalizeLifeConfig(config)
+  const configView = () => (isFlatConfig(suppliedConfig) ? publicConfig(suppliedConfig) : {})
   const databasePath =
     config.databasePath === undefined ? defaultDatabasePath() : requireString(config.databasePath, 'databasePath', 4000)
   if (config.tickIntervalMs !== undefined) assertInteger(config.tickIntervalMs, 'tickIntervalMs', { min: 0, max: 600000 })
@@ -524,7 +532,25 @@ export function apply(ctx, config = {}) {
         // Preserve the bootstrap failure.
       }
       ctx.logger?.error?.(`amadeus-life: setup bootstrap failed closed: ${failure.message}`)
-      ctx.provide('life', setupFailedLife(failure, bootstrap))
+      const failed = setupFailedLife(failure, bootstrap)
+      ctx.provide('life', failed)
+      const unavailable = () => {
+        throw new LifeUnauthorizedError('Life setup is unavailable; fix bootstrap/binding conflicts and reload')
+      }
+      mountHttp(ctx, {
+        getHealth: () => failed.getHealth(),
+        getSetup: () => failed.getHealth().setup,
+        getConfig: () => configView(),
+        listBindings: () => [],
+        listIntents: () => ({ total: 0, items: [] }),
+        listActivities: () => ({ total: 0, items: [] }),
+        listWakes: () => [],
+        listBudgets: () => [],
+        cancelIntent: unavailable,
+        activityAction: async () => unavailable(),
+        bootstrap: unavailable,
+        revokeBinding: unavailable,
+      })
       return
     }
   }
@@ -712,6 +738,21 @@ export function apply(ctx, config = {}) {
   // setup failure cannot leak the lease, timer, or SQLite handle. Public
   // `api.close()` and Host disposal share this exact idempotent path.
   ctx.effect(() => dispose)
+
+  mountHttp(ctx, {
+    getHealth: () => api.getHealth(),
+    getSetup: () => setup,
+    getConfig: () => configView(),
+    listBindings: () => core.v1.adminListBindings(),
+    listIntents: (options) => core.v1.adminListIntents(options),
+    listActivities: (options) => core.v1.adminListActivities(options),
+    listWakes: (options) => core.v1.adminListWakes(options),
+    listBudgets: () => core.v1.adminListBudgets(),
+    cancelIntent: (id, expectedRevision) => core.v1.adminCancelIntent(id, expectedRevision),
+    activityAction: (action, id) => core.v1.adminActivityAction(action, id),
+    bootstrap: (options) => core.v1.adminBootstrap(options),
+    revokeBinding: (options) => core.v1.adminRevokeBinding(options),
+  })
 
   try {
     ctx.provide('life', api)

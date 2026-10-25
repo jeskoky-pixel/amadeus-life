@@ -28,9 +28,9 @@ Write the JSON without touching any profile:
 node scripts/life-setup.mjs --preset autonomous --sessions <session-id> --out life-config.json
 ```
 
-The helper only validates and prints/writes plain JSON. It never reads secrets, edits `package.json`/`cordis.patch.yml`, binds a Session, or enables anything. `--out` uses exclusive create (`wx`): it creates a **new** file at your chosen path and refuses to overwrite an existing file.
+The helper only validates and prints/writes plain JSON using the same flat Config fields as DSH Config Forms/Plugin Manager. It never reads secrets, edits `package.json`/`cordis.patch.yml`, binds a Session, or enables anything. `--out` uses exclusive create (`wx`): it creates a **new** file at your chosen path and refuses to overwrite an existing file.
 
-Autonomous/activity presets include `bootstrap: { enabled: true, personaName: 'Amadeus' }`. On first activation Life creates one stable default Persona, one private Scene per allowlisted Session, and one binding per Session. The second load with the same config performs no writes and does not increment binding revision. If a Session already has a different Persona/Scene binding, activation fails closed with `setup.state: 'failed'`; Life never rebinds or overwrites history. Core-only does not bootstrap anything.
+Autonomous/activity presets include `bootstrapEnabled: true` and `bootstrapPersonaName: 'Amadeus'`. On first activation Life creates one stable default Persona, one private Scene per allowlisted Session, and one binding per Session. The second load with the same config performs no writes and does not increment binding revision. If a Session already has a different Persona/Scene binding, activation fails closed with `setup.state: 'failed'`; Life never rebinds or overwrites history. Core-only does not bootstrap anything.
 
 ## 3. Put it on the Life plugin row
 

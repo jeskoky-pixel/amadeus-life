@@ -1,4 +1,4 @@
-# 安装与配置（0.1.0 开发版）
+# 安装与配置（Amadeus Life 1.0.0）
 
 验证环境：官方 DSH Desktop 0.2.1-rc.3、Node 22.23.2；包声明 Node >=22.13.0，依赖 node:sqlite，无第三方运行依赖。只有上述 DSH 版本经过本轮集成验证。
 
@@ -6,7 +6,7 @@
 
 ## 安装
 
-先克隆本仓库。由管理员使用该**开发配置**的正式 Plugin Manager 安装克隆目录。后台接口的实际语义如下（为宿主 API，不是 shell 命令）：
+先克隆本仓库。由管理员使用该**开发配置**的正式 Plugin Manager 安装版本化 tarball `dist/amadeus-life-1.0.0.tgz`（或克隆目录）。后台接口的实际语义如下（为宿主 API，不是 shell 命令）：
 
 ```js
 pluginManager.installBundle(absoluteClonePath, { enabled: true })
@@ -17,11 +17,13 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
 
 以上四种操作均在隔离真实 Desktop 测试过。检查结果中的 application 和错误；pnpm exit 0 不等于激活成功。安装需要经过认证的管理员连接；普通 Workspace Write Agent 不因此获得配置管理或 Full Access。Desktop profile 由 Electron 管理，不要套用 CLI 修改生产 desktop profile。
 
-本轮用本地 link 安装源码；没有 npm release。更新源码后应先运行测试，再通过开发配置的管理器按其返回结果重新加载或重启。普通用户配置可直接用离线生成器：`node scripts/life-setup.mjs --preset core|autonomous|activity`（只输出 JSON，不改 profile）。
+本轮用本地 link 安装源码；同时生成 `dist/amadeus-life-1.0.0.tgz`、SHA-256 与包元数据，没有 npm release。更新源码后先运行 `npm run build && npm test && npm run package`，再通过开发配置的管理器按其返回结果重新加载或重启。普通用户配置可直接用离线生成器：`node scripts/life-setup.mjs --preset core|autonomous|activity`（只输出 JSON，不改 profile）。
+
+安装后在 DSH Desktop 左下角 **设置** 的左侧导航中打开 **Amadeus Life**。页面提供总览、首次配置、Session/权限、意图、活动、预算和高级/诊断；常用参数直接保存到与 Plugin Manager 相同的 Config，部分字段需要重启。完整操作见 [用户指南](USER_GUIDE.md)。
 
 ## 配置
 
-默认 bundle 插入 id=amadeus-life、name=@amadeus/life。可在开发配置中按官方 patch 语法覆盖：
+默认 bundle 插入 id=amadeus-life、name=@amadeus/life。Plugin Manager/Config Forms 使用同一套扁平字段；手工声明时为：
 
 ```yaml
 - id: amadeus-life
@@ -29,15 +31,13 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
     databasePath: C:/amadeus-dev-data/life.sqlite
     tickIntervalMs: 1000
     maxReviewBatch: 20
-    wakeDelivery:
-      enabled: true
-      allowedSessionIds: [session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa]
-    bootstrap:
-      enabled: true
-      personaName: Amadeus
+    wakeDeliveryEnabled: true
+    allowedSessionIds: [session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa]
+    bootstrapEnabled: true
+    bootstrapPersonaName: Amadeus
 ```
 
-databasePath 默认是当前 DSH_HOME/amadeus-life/life.sqlite。配置必须由可信管理员决定，模型工具不接受数据库路径。tickIntervalMs 可为 0（手动 tick）；每次最多检查 maxReviewBatch 项。停用时清理定时器、lease 与连接；卸载不会删除数据库。
+`databasePath` 默认是当前 DSH_HOME/amadeus-life/life.sqlite。配置必须由可信管理员决定，模型工具不接受数据库路径。`tickIntervalMs` 可为 0（手动 tick）；每次最多检查 `maxReviewBatch` 项。停用时清理定时器、lease 与连接；卸载不会删除数据库。
 
 普通用户先看单屏 [SETUP](SETUP.md)：三种预设、Session allowlist 说明、首次 bootstrap、admin 自定义绑定与健康错误。`bootstrap` 默认关闭；它会在 Life 行启用时创建稳定默认 Persona、每 Session 一个 private Scene 与 binding，同配置重复加载幂等，已有不同 binding 时 fail closed。下面的完整配置只给需要精细控制的 Advanced 管理员。
 

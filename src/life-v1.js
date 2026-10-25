@@ -1001,6 +1001,140 @@ export class LifeV1 {
     }
   }
 
+  // Admin read/control surface for the native settings page -------------------
+  /** @returns {Record<string, unknown>[]} safe Session binding views. */
+  adminListBindings() {
+    return this.store.all(
+      `SELECT b.*, s.privacy AS scene_privacy, p.name AS persona_name
+       FROM session_bindings b
+       LEFT JOIN scenes s ON s.id = b.scene_id
+       LEFT JOIN personas p ON p.id = b.persona_id
+       ORDER BY b.target_session_id ASC`,
+    ).map((row) => ({
+      targetSessionId: row.target_session_id,
+      personaId: row.persona_id,
+      personaName: row.persona_name ?? null,
+      sceneId: row.scene_id,
+      privacy: row.scene_privacy ?? 'unknown',
+      active: row.active === 1,
+      revision: row.revision,
+      updatedAt: row.updated_at,
+    }))
+  }
+
+  /**
+   * @param {{limit?: number, offset?: number}} [options]
+   * @returns {{total: number, items: Record<string, unknown>[]}} bounded intents.
+   */
+  adminListIntents({ limit = 50, offset = 0 } = {}) {
+    const take = assertInteger(limit, 'limit', { min: 1, max: 200 })
+    const skip = assertInteger(offset, 'offset', { min: 0, max: 1_000_000 })
+    const total = Number(this.store.get('SELECT COUNT(*) AS n FROM intents').n)
+    const items = this.store.all(
+      `SELECT id, revision, status, description, context_scope, related_activity_id,
+              created_at, updated_at, review_at
+       FROM intents ORDER BY review_at ASC, id ASC LIMIT ? OFFSET ?`,
+      take,
+      skip,
+    ).map((row) => ({
+      id: row.id,
+      revision: row.revision,
+      status: row.status,
+      description: row.description,
+      contextScope: row.context_scope,
+      relatedActivityId: row.related_activity_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      reviewAt: row.review_at,
+    }))
+    return { total, items }
+  }
+
+  /**
+   * @param {{limit?: number, offset?: number}} [options]
+   * @returns {{total: number, items: Record<string, unknown>[]}} bounded activities.
+   */
+  adminListActivities({ limit = 50, offset = 0 } = {}) {
+    const take = assertInteger(limit, 'limit', { min: 1, max: 200 })
+    const skip = assertInteger(offset, 'offset', { min: 0, max: 1_000_000 })
+    const total = Number(this.store.get('SELECT COUNT(*) AS n FROM activities').n)
+    const items = this.store.all(
+      'SELECT id, owner_scope FROM activities ORDER BY updated_at DESC, id ASC LIMIT ? OFFSET ?',
+      take,
+      skip,
+    ).map((row) => this.core.getActivity(row.id, { scope: row.owner_scope }))
+    return { total, items }
+  }
+
+  /**
+   * @param {{limit?: number}} [options]
+   * @returns {Record<string, unknown>[]} recent wake summaries.
+   */
+  adminListWakes({ limit = 20 } = {}) {
+    const take = assertInteger(limit, 'limit', { min: 1, max: 100 })
+    return this.store.all(
+      `SELECT id, origin, status, target_session_id, created_at, updated_at, executed_at,
+              last_error, prepared_message_id, message_id
+       FROM wake_requests ORDER BY created_at DESC, id ASC LIMIT ?`,
+      take,
+    ).map((row) => ({
+      id: row.id,
+      origin: row.origin ?? 'intent',
+      status: row.status,
+      targetSessionId: row.target_session_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      executedAt: row.executed_at,
+      lastError: row.last_error,
+      preparedMessageId: row.prepared_message_id,
+      messageId: row.message_id,
+    }))
+  }
+
+  /** @returns {Record<string, unknown>[]} configured budget views. */
+  adminListBudgets() {
+    return this.store.all('SELECT scope FROM budget_scopes ORDER BY scope ASC').map((row) => this.getBudget(row.scope))
+  }
+
+  /**
+   * @param {string} intentId @param {number} expectedRevision
+   * @returns {Record<string, unknown>} cancelled intent.
+   */
+  adminCancelIntent(intentId, expectedRevision) {
+    const row = this.store.get('SELECT id, context_scope FROM intents WHERE id = ?', requireString(intentId, 'intentId', 200))
+    if (row === undefined) throw new LifeNotFoundError('intent was not found', { intentId })
+    return this.core.cancelIntent(row.id, { scope: row.context_scope, expectedRevision })
+  }
+
+  /**
+   * @param {'pause'|'resume'|'cancel'} action @param {string} activityId
+   * @returns {Promise<Record<string, unknown>>} updated activity.
+   */
+  async adminActivityAction(action, activityId) {
+    if (!['pause', 'resume', 'cancel'].includes(action)) {
+      throw new LifeValidationError('action must be pause, resume, or cancel')
+    }
+    const row = this.store.get('SELECT id, owner_scope FROM activities WHERE id = ?', requireString(activityId, 'activityId', 200))
+    if (row === undefined) throw new LifeNotFoundError('activity was not found', { activityId })
+    return this.operateActivity(action, row.id, row.owner_scope)
+  }
+
+  /**
+   * @param {{targetSessionIds: string[], personaName?: string}} input
+   * @returns {Record<string, unknown>} bootstrap result.
+   */
+  adminBootstrap(input) {
+    return this.bootstrapLocalIdentity(input)
+  }
+
+  /**
+   * @param {{targetSessionId: string}} input
+   * @returns {Record<string, unknown>} revoked binding.
+   */
+  adminRevokeBinding({ targetSessionId } = {}) {
+    return this.revokeSessionBinding({ targetSessionId })
+  }
+
   // Attention, shared read, and usage accounting ----------------------------
   /**
    * Give a real user turn priority over same-Session long activities. Pause and

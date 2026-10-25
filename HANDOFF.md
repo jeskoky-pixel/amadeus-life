@@ -1,6 +1,17 @@
 # amadeus-life 交接
 
-## 最新检查点：Life v1 final hardening / SQLite v9（2026-10-25）
+## 最新检查点：Amadeus Life 1.0.0 产品化（2026-10-25）
+
+- 版本 `1.0.0`；schema v9。新增原生 DSH Settings 导航 **Amadeus Life**、`./client` lazy-CJS 浏览器模块、统一权威 Config Schema/Config Forms（23 个扁平字段）、首次向导（Core/Autonomous/Local Activity）、Session allowlist/binding、意图/活动/预算/诊断页面。GUI 通过 owner-auth same-origin `/api/amadeus-life` 访问 Host，不直连 SQLite；活动只能 pause/resume/cancel，不能直接标记 completed。
+- 新增 `src/config-fields.js`、`src/config-schema.js`、`src/config.js`、`src/schema.js`、`src/http.js`、`src/client/`、`lib/client.js`、`scripts/build-client.mjs`。`scripts/life-setup.mjs` 输出改为与 Config Schema 一致的扁平字段；core 预设不创建身份。
+- `npm run package` 生成 `dist/amadeus-life-1.0.0.tgz`、SHA-256 与 `life-package.json`；包内含 Host/Client/Schema/locale/icon/docs/test，不含数据库或私人数据。新增用户指南、升级/回滚、构建、发行说明。
+- 确定性测试 **167** 项通过：quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5、productization 6。Creator 沙箱 `node --test` 仍可能 runner `spawn EPERM`；`npm test` 与直接测试通过。
+- 未提交/推送、未安装到 profile、未改生产；真实隔离 DSH 的 GUI/tarball 安装/升级/v8→v9 冷迁移仍待 Codex 实机验收。
+- **REWORK_1**：真实 DSH 0.2.1-rc.3 中 Host API 200 但无设置入口/配置卡，根因是 DSH `dsh-settings` 只投影 volatile Config 字段；Life 23 字段原先全非 volatile，导致 `amadeus-life` 不进入 describe mirror、`whileServed` 不触发。已将全部字段标为 volatile，新增 `plugins.row.config`（`@amadeus/life#amadeus-life`）与 `plugins.detail.section` 基础卡，全部共用 ConfigForms/revision；运行语义明确为重启生效，不显示伪即时生效。新包 hash 见 REWORK_1_REPORT。
+- **REWORK_2**：实机出现 `settings.section` / `plugins.detail.section` 重复注册。根因是 `configForms.whileServed` 的 register 回调没有返回 disposer，mirror 同步/重载时重复调用 `ctx.slots.inject`/`register`。现两个注册路径都返回组合 disposer，fallback 也走 `ctx.effect`；PROD5 在双重同步下断言只注册 3 个贡献、卸载后全部清空。见 REWORK_2_REPORT。
+- **REWORK_3**：实机合法修改后保存按钮始终禁用。根因是 `validateField` 把 string/array 当 number，`hasErrors` 永真；现已按 boolean/number/string/array/enum 校验，补默认值、allowlist/idle/bootstrap/quiet-hour 交叉约束和逐字段可见错误，详情卡共用同一校验/revision；PROD6 回归默认配置与 75 合法修改。见 REWORK_3_REPORT。
+
+## 检查点：Life v1 final hardening / SQLite v9（2026-10-25）
 
 - 同一 Creator 会话修复 Codex 五项最终回归：Session 撤销只影响本 Session 活动（同 Persona 的 A 保持 revision/lease/status）；Provider-managed 活动中央 transition 拒绝模型 failed/completed/cancel-confirm/pause/resume 并保留资源；Session Persona/Scene 禁止原地切换；共享视图使用跨场景字段 allowlist 并排除 legacy 无 scene 行；每 wake token 预留、官方 usage 幂等结算、Session/Persona/global 有效预算与 worker 竞争。
 - schema v9：v2–v8 增量迁移，新增 `provider_managed`、`tokens_reserved`、`token_reservations/token_reservation_scopes`；v6→v9、v7→v9、v8→v9 及失败回滚测试。确定性测试 161 项通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5）。

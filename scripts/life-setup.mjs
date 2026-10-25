@@ -6,6 +6,7 @@
  */
 import { writeFileSync } from 'node:fs'
 import { isDshSessionScope } from '../src/model.js'
+import { isFlatConfig, normalizeLifeConfig } from '../src/config.js'
 
 export const PRESETS = Object.freeze(['core', 'autonomous', 'activity'])
 
@@ -48,36 +49,36 @@ export function buildSetup({
     throw new Error('activityLimit must be a non-negative integer')
   }
   const config = {
-    wakeDelivery: {
-      enabled: false,
-      allowedSessionIds: allowed,
-      intervalMs: 60_000,
-      maxPerDrive: 1,
-    },
-    idle: { enabled: false },
-    activityTools: { enabled: false },
-    sharedRead: { enabled: false },
+    wakeDeliveryEnabled: false,
+    allowedSessionIds: allowed,
+    wakeIntervalSeconds: 60,
+    maxPerDrive: 1,
+    idleEnabled: false,
+    idleTargetSessionId: '',
+    idleWindowMinutes,
+    quietAfterActivityMinutes: 5,
+    wakeBudgetEnabled: false,
+    wakeLimit: 20,
+    wakeWindowHours: 24,
+    tokenLimit: 0,
+    costLimit: 0,
+    activityLimit: 0,
+    activityToolsEnabled: false,
+    sharedReadEnabled: false,
+    bootstrapEnabled: false,
+    bootstrapPersonaName: 'Amadeus',
   }
   if (preset === 'autonomous') {
-    config.wakeDelivery.enabled = true
-    config.bootstrap = { enabled: true, personaName: 'Amadeus' }
-    config.idle = {
-      enabled: true,
-      targetSessionId: allowed[0],
-      windowMs: idleWindowMinutes * 60_000,
-      quietAfterActivityMs: 5 * 60_000,
-    }
-    config.wakeBudget = {
-      enabled: true,
-      windowMs: 86_400_000,
-      wakeLimit: 20,
-      activityLimit,
-      estimatedTokens: 0,
-    }
+    config.wakeDeliveryEnabled = true
+    config.idleEnabled = true
+    config.idleTargetSessionId = allowed[0]
+    config.wakeBudgetEnabled = true
+    config.activityLimit = activityLimit
+    config.bootstrapEnabled = true
   }
   if (preset === 'activity') {
-    config.activityTools = { enabled: true }
-    config.bootstrap = { enabled: true, personaName: 'Amadeus' }
+    config.activityToolsEnabled = true
+    config.bootstrapEnabled = true
   }
   return {
     preset,
@@ -103,51 +104,15 @@ function buildNotes(preset, allowed) {
   return notes
 }
 
-/** Minimal independent validator for a generated row config. */
+/** Validate the flat authoritative Config shape emitted for a Life row. */
 export function validateSetup(config) {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error('config must be a plain object')
   }
-  const provider = config.wakeDelivery
-  if (provider !== undefined) {
-    if (provider === null || typeof provider !== 'object') throw new Error('wakeDelivery must be an object')
-    const allowed = normalizeSessions(provider.allowedSessionIds ?? [])
-    if (provider.enabled === true && allowed.length === 0) {
-      throw new Error('wakeDelivery.enabled requires at least one allowed Session')
-    }
-    if (provider.intervalMs !== undefined && (!Number.isInteger(provider.intervalMs) || provider.intervalMs < 1000)) {
-      throw new Error('wakeDelivery.intervalMs must be an integer >= 1000')
-    }
-    if (provider.maxPerDrive !== undefined && (!Number.isInteger(provider.maxPerDrive) || provider.maxPerDrive < 1 || provider.maxPerDrive > 5)) {
-      throw new Error('wakeDelivery.maxPerDrive must be 1..5')
-    }
-    if (config.idle?.enabled === true) {
-      if (typeof config.idle.targetSessionId !== 'string' || !allowed.includes(config.idle.targetSessionId)) {
-        throw new Error('idle.targetSessionId must be in wakeDelivery.allowedSessionIds')
-      }
-    }
-  }
-  if (config.activityTools !== undefined && typeof config.activityTools?.enabled !== 'boolean') {
-    throw new Error('activityTools.enabled must be a boolean')
-  }
-  if (config.bootstrap !== undefined) {
-    if (config.bootstrap === null || typeof config.bootstrap !== 'object') {
-      throw new Error('bootstrap must be an object')
-    }
-    if (typeof config.bootstrap.enabled !== 'boolean') {
-      throw new Error('bootstrap.enabled must be a boolean')
-    }
-    if (config.bootstrap.enabled === true) {
-      const allowed = normalizeSessions(config.wakeDelivery?.allowedSessionIds ?? [])
-      if (allowed.length === 0) throw new Error('bootstrap.enabled requires wakeDelivery.allowedSessionIds')
-      if (config.bootstrap.personaName !== undefined && typeof config.bootstrap.personaName !== 'string') {
-        throw new Error('bootstrap.personaName must be a string')
-      }
-    }
-  }
-  if (config.sharedRead !== undefined && typeof config.sharedRead?.enabled !== 'boolean') {
-    throw new Error('sharedRead.enabled must be a boolean')
-  }
+  if (!isFlatConfig(config)) throw new Error('config must use the flat Life Config fields')
+  // The same normalizer used at Host activation validates the generated flat
+  // fields, so the helper cannot emit a config the plugin would reject.
+  normalizeLifeConfig(config)
   return true
 }
 

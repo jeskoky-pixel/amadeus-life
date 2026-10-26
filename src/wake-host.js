@@ -25,11 +25,14 @@ const EVIDENCE_EVENT_LIMIT = 800
  * @param {Record<string, unknown>} wake - wake row view.
  * @returns {string} prompt text.
  */
-export function wakePrompt(wake) {
+export function wakePrompt(wake, externalMessageAllowed = false) {
   if (wake.origin === 'idle') {
     return `Life idle opportunity ${String(wake.id)}: no task is required. You may rest or stay silent; re-read current Life state if you decide to act. Do not send external messages from this wake.`
   }
-  return `Life wake ${String(wake.id)}: intent ${String(wake.intentId)} revision ${String(wake.intentRevision)}. Re-read the current Life state before deciding anything; do not send external messages from this wake.`
+  const boundary = externalMessageAllowed
+    ? 'External messages may be sent only if the current intent calls for them, in this current Session, through tools that permit the target Scene. Do not send to another Scene.'
+    : 'Do not send external messages from this wake.'
+  return `Life wake ${String(wake.id)}: intent ${String(wake.intentId)} revision ${String(wake.intentRevision)}. Re-read the current Life state before deciding anything; ${boundary}`
 }
 
 /** @param {unknown} value @returns {string} */
@@ -54,6 +57,7 @@ export class WakeHost {
    * @param {{resolveAgent: (sessionId: string) => Promise<unknown>}} [options.sessionController] - Host controller.
    * @param {(session: unknown) => Promise<boolean>} [options.flushSession] - durable Session flush.
    * @param {string[]} options.allowedSessionIds - administrator allowlist.
+   * @param {string[]} options.externalMessageSessionIds - explicit administrator opt-in subset.
    * @param {number} options.intervalMs - low-frequency timer interval.
    * @param {number} options.maxPerDrive - bounded claims per drive.
    * @param {() => number} [options.clock] - clock.
@@ -66,6 +70,7 @@ export class WakeHost {
     ownerId,
     enabled = false,
     allowedSessionIds,
+    externalMessageSessionIds = [],
     intervalMs,
     maxPerDrive,
     idle = null,
@@ -82,6 +87,7 @@ export class WakeHost {
     this.listenerRegistrar = undefined
     this.allowed = [...new Set(allowedSessionIds ?? [])]
     this.allowedSet = new Set(this.allowed)
+    this.externalMessageSessionIds = new Set(externalMessageSessionIds)
     this.intervalMs = intervalMs
     this.maxPerDrive = maxPerDrive
     this.idle = idle !== null && typeof idle === 'object' ? { enabled: idle.enabled === true, ...idle } : { enabled: false }
@@ -425,6 +431,11 @@ export class WakeHost {
       return this.#uncertain(wake, 'host binding changed before followup')
     }
 
+    // External-message guidance is derived from the persisted current intent,
+    // never from the wake row or the Session binding authorization string. Any
+    // lookup error or disagreement fails closed to the non-sending prompt.
+    const externalMessageAllowed = this.#externalMessageAllowed(wake)
+
     const agent = resolved.agent
     const messageId = randomUUID()
     try {
@@ -435,7 +446,7 @@ export class WakeHost {
     const message = {
       role: 'user',
       id: messageId,
-      content: [{ type: 'text', text: wakePrompt(wake) }],
+      content: [{ type: 'text', text: wakePrompt(wake, externalMessageAllowed) }],
       source: { kind: WAKE_SOURCE_KIND, wakeId: wake.id },
     }
     try {
@@ -479,6 +490,39 @@ export class WakeHost {
       }
       return { status: 'uncertain', wakeId: wake.id, reason: 'admission failed' }
     }
+  }
+
+  /**
+   * Decide whether the delivered prompt may mention external messaging.
+   *
+   * The authoritative provenance is the persisted current intent's
+   * `authorizationRef`, not the wake row or the Session binding authorization
+   * string. This changes only the prompt boundary: downstream tool and QQ Scene
+   * permissions still decide whether anything can actually be sent.
+   * @param {Record<string, unknown>} wake - rechecked claimed wake.
+   * @returns {boolean} true only for an explicitly opted-in, tool-authorized intent wake.
+   */
+  #externalMessageAllowed(wake) {
+    if (wake.origin === 'idle') return false
+    const targetSessionId = wake.targetSessionId
+    if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) return false
+    if (!this.allowedSet.has(targetSessionId)) return false
+    if (!this.externalMessageSessionIds.has(targetSessionId)) return false
+    if (typeof wake.intentId !== 'string' || wake.intentId.length === 0) return false
+    if (wake.contextScope !== `session:${targetSessionId}`) return false
+    let intent
+    try {
+      intent = this.core.getIntent(wake.intentId, { scope: wake.contextScope })
+    } catch {
+      return false
+    }
+    if (intent === null || typeof intent !== 'object') return false
+    if (intent.id !== wake.intentId) return false
+    if (intent.contextScope !== wake.contextScope) return false
+    if (intent.status !== 'active') return false
+    if (intent.authorizationRef !== `life-tool:session:${targetSessionId}`) return false
+    if (Number(intent.revision) !== Number(wake.intentRevision)) return false
+    return true
   }
 
   /** @param {number} generation - binding generation.

@@ -34,9 +34,13 @@ Autonomous/activity presets include `bootstrapEnabled: true` and `bootstrapPerso
 
 ## 3. Put it on the Life plugin row
 
-In the DSH Plugin Manager / Loader config, set the generated object as the `config` of the `amadeus-life` row. Do not hand-edit a production profile; use the administrator's normal install/update path. The `databasePath` is optional; leave it default unless the administrator has a reason to move the SQLite file.
+In **DSH Config Forms / Plugin Manager**, set the flat Life fields on the `amadeus-life` row, or use the generated object as the row `config`. The administrator-facing flat fields are `wakeDeliveryEnabled`, `allowedSessionIds`, `externalMessageSessionIds`, `wakeIntervalSeconds`, `bootstrapEnabled`, and `bootstrapPersonaName`; the Settings form shows these same names. Do not hand-edit a production profile; use the administrator's normal install/update path. The `databasePath` is optional; leave it default unless the administrator has a reason to move the SQLite file.
 
-`wakeDelivery.allowedSessionIds` is an **allowlist**: only these DSH Session ids can receive Life wake/idle delivery. Copy ids from the Session list; a wrong or empty list keeps autonomous delivery degraded/off. Never paste credentials or private content into config.
+`allowedSessionIds` is an **allowlist**: only these DSH Session ids can receive Life wake/idle delivery. Copy ids from the Session list; a wrong or empty list keeps autonomous delivery degraded/off. Never paste credentials or private content into config.
+
+The optional flat `externalMessageSessionIds` defaults to `[]` and must be a subset of `allowedSessionIds` (every entry must also appear in the allowlist). Only an intent wake in one of those Sessions whose persisted current intent has model-tool provenance (`authorizationRef` = `life-tool:session:<targetSessionId>`) gets prompt guidance that existing external tools may be used; the Host reads that persisted intent, not the wake row or the Session binding string. Idle wakes and administrator-created intents still prohibit external messaging. This field changes only the wake prompt: it does not grant QQ permission, and the downstream QQ Scene allowlist and tool permissions remain authoritative. Enable it only for a deliberately authorized Session.
+
+Legacy programmatic nested config (for example `wakeDelivery.allowedSessionIds`) is still accepted for compatibility, but it is not the administrator UI; use the flat fields above in DSH.
 
 ## 4. First-run identity (automatic bootstrap)
 

@@ -30,6 +30,22 @@ export const CONFIG_FIELDS = Object.freeze([
     en: { label: 'Allowed Session ids', help: 'Only these valid DSH Session ids may receive autonomous wake. Sessions are never enumerated or invented.' },
   },
   {
+    key: 'externalMessageSessionIds',
+    type: 'array',
+    itemType: 'string',
+    default: [],
+    restart: true,
+    group: 'common',
+    zh: {
+      label: '外发授权 Session',
+      help: '必须是 Session allowlist 的子集；默认空列表即完全禁止。仅允许这些 Session 内由模型工具授权的 intent wake 外发；idle 与其他意图仍禁止，且不会授予任何 QQ Scene 权限。',
+    },
+    en: {
+      label: 'External-message Session opt-in',
+      help: 'Must be a subset of the Session allowlist; empty by default means deny all. Only tool-authorized intent wakes in these Sessions may send externally; idle and other intents remain blocked, and this grants no QQ Scene permission.',
+    },
+  },
+  {
     key: 'wakeIntervalSeconds',
     type: 'number',
     default: 60,

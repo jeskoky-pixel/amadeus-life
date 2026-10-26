@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { LifeCore } from '../src/core.js'
 import { apply } from '../src/index.js'
-import { SNAPSHOT_SCAN_LIMIT } from '../src/wake-host.js'
+import { SNAPSHOT_SCAN_LIMIT, WakeHost, wakePrompt } from '../src/wake-host.js'
 
 const BASE = '2026-01-01T00:00:00.000Z'
 const SESSION_A = 'session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -210,6 +210,183 @@ test('H3 allowlist bounds claims, keeps other Sessions pending, and sends no sec
   const second = await life.driveDueWakesOnce()
   assert.equal(second.delivered.length, 0)
   assert.equal(entryA.followups.length, 1)
+})
+
+test('external QQ messaging guidance requires administrator opt-in and tool provenance', async () => {
+  const { life, clock, agents } = setup({
+    delivery: {
+      enabled: true, allowedSessionIds: [SESSION_A],
+      externalMessageSessionIds: [SESSION_A], intervalMs: 60_000,
+    },
+  })
+  seedDue(life, clock)
+  await life.driveDueWakesOnce()
+  const prompt = messageFor(agents.get(SESSION_A)).content[0].text
+  assert.match(prompt, /external messages.*current Session/i)
+  assert.doesNotMatch(prompt, /Do not send external messages/)
+
+  const disabled = setup({ delivery: { enabled: true, allowedSessionIds: [SESSION_A], intervalMs: 60_000 } })
+  seedDue(disabled.life, disabled.clock)
+  await disabled.life.driveDueWakesOnce()
+  assert.match(messageFor(disabled.agents.get(SESSION_A)).content[0].text, /Do not send external messages/)
+})
+
+test('external QQ messaging opt-in rejects sessions outside wake allowlist', () => {
+  assert.throws(() => setup({ delivery: {
+    enabled: true, allowedSessionIds: [SESSION_A], externalMessageSessionIds: [SESSION_B],
+  } }), /externalMessageSessionIds/)
+})
+
+test('external messaging opt-in cannot wake an intent without tool provenance', async () => {
+  const { life, clock, agents } = setup({ delivery: {
+    enabled: true, allowedSessionIds: [SESSION_A], externalMessageSessionIds: [SESSION_A],
+  } })
+  life.createIntent({ description: SECRET, reviewAt: clock.at(0),
+    contextScope: `session:${SESSION_A}`, authorizationRef: 'admin:synthetic-qa' })
+  life.tickNow()
+  const result = await life.driveDueWakesOnce()
+  assert.equal(result.delivered.length, 0)
+  assert.equal(agents.get(SESSION_A), undefined)
+})
+
+test('idle wake remains non-sending even when external messaging is opted in', () => {
+  assert.match(wakePrompt({ origin: 'idle', id: 'idle-1' }, true), /Do not send external messages/)
+})
+
+function persistedIntent(overrides = {}) {
+  return {
+    id: 'intent-1',
+    revision: 1,
+    status: 'active',
+    contextScope: `session:${SESSION_A}`,
+    authorizationRef: `life-tool:session:${SESSION_A}`,
+    ...overrides,
+  }
+}
+
+function intentWake(overrides = {}) {
+  return {
+    id: 'wake-1',
+    kind: 'intent_due',
+    origin: 'intent',
+    intentId: 'intent-1',
+    intentRevision: 1,
+    contextScope: `session:${SESSION_A}`,
+    targetSessionId: SESSION_A,
+    authorizationRef: `life-tool:session:${SESSION_A}`,
+    ...overrides,
+  }
+}
+
+/**
+ * Drive deliver() with a fake trusted core so the prompt can be inspected
+ * without a real Host. Only the persisted intent and the wake row vary.
+ */
+function directWakeHost({ intent, allowedSessionIds = [SESSION_A], externalMessageSessionIds = [SESSION_A] }) {
+  const followups = []
+  const intentCalls = []
+  const core = {
+    getIntent(id, options) {
+      intentCalls.push({ id, options })
+      if (intent instanceof Error) throw intent
+      return intent
+    },
+    recheckClaimedWake() { return { valid: true } },
+    prepareWakeDelivery() {},
+    markWakeAdmitted() { return { status: 'admitted' } },
+  }
+  const host = new WakeHost({
+    core,
+    ownerId: 'owner-test',
+    enabled: true,
+    allowedSessionIds,
+    externalMessageSessionIds,
+    intervalMs: 60_000,
+    maxPerDrive: 1,
+  })
+  host.bound = true
+  host.bindingGeneration = 7
+  host.sessionController = {
+    resolveAgent: async (sessionId) => ({
+      agent: {
+        session: { id: sessionId },
+        followup(message) { followups.push(message) },
+      },
+    }),
+  }
+  host.flushSession = async () => true
+  // Keep this slice focused on prompt construction; reconciliation is covered
+  // by the existing admission/reconciliation tests.
+  host.reconcileAlreadyCompleted = () => {}
+  return { host, followups, intentCalls }
+}
+
+async function deliveredPrompt({ wake = intentWake(), intent = persistedIntent(), allowedSessionIds, externalMessageSessionIds } = {}) {
+  const delivery = directWakeHost({ intent, allowedSessionIds, externalMessageSessionIds })
+  const outcome = await delivery.host.deliver(wake, delivery.host.bindingGeneration)
+  assert.equal(outcome.status, 'admitted')
+  assert.equal(delivery.followups.length, 1)
+  return { prompt: delivery.followups[0].content[0].text, ...delivery }
+}
+
+test('external-message opt-in comes from the persisted tool-authorized intent, not the wake authorizationRef', async () => {
+  // The wake row carries a binding-looking authorizationRef. It must neither
+  // grant nor deny the prompt: the persisted intent is authoritative.
+  const wake = intentWake({ authorizationRef: 'admin:settings:binding-generation-4' })
+  const { prompt } = await deliveredPrompt({ wake, intent: persistedIntent() })
+  assert.match(prompt, /External messages may be sent only if the current intent calls for them/)
+  assert.doesNotMatch(prompt, /Do not send external messages/)
+})
+
+test('a forged tool-looking wake authorizationRef cannot grant opt-in for an admin-created intent', async () => {
+  // Regression for the real QA finding: the old check trusted the wake row's
+  // authorizationRef, so a forged tool-looking value could grant guidance even
+  // though the durable intent was not created by a model tool.
+  const wake = intentWake({ authorizationRef: `life-tool:session:${SESSION_A}` })
+  const intent = persistedIntent({ authorizationRef: 'admin:created-by-operator' })
+  const { prompt } = await deliveredPrompt({ wake, intent })
+  assert.match(prompt, /Do not send external messages/)
+  assert.doesNotMatch(prompt, /External messages may be sent/)
+})
+
+test('admin-created intent and idle wake stay forbidden with the opt-in configured', async () => {
+  const admin = await deliveredPrompt({
+    wake: intentWake({ authorizationRef: 'admin:settings:binding-generation-4' }),
+    intent: persistedIntent({ authorizationRef: 'admin:created-by-operator' }),
+  })
+  assert.match(admin.prompt, /Do not send external messages/)
+
+  const idleWake = intentWake({
+    id: 'wake-idle',
+    origin: 'idle',
+    authorizationRef: `life-tool:session:${SESSION_A}`,
+  })
+  const idle = await deliveredPrompt({ wake: idleWake, intent: persistedIntent() })
+  assert.match(idle.prompt, /Do not send external messages/)
+  assert.equal(idle.intentCalls.length, 0, 'idle wakes must not consult intent provenance')
+})
+
+test('external-message opt-in fails closed on intent lookup errors, disagreement, and revocation', async () => {
+  const cases = [
+    ['lookup throws', { intent: new Error('intent storage unavailable') }],
+    ['intent missing', { intent: null }],
+    ['intent id mismatch', { intent: persistedIntent({ id: 'intent-other' }) }],
+    ['intent scope mismatch', { intent: persistedIntent({ contextScope: `session:${SESSION_B}` }) }],
+    ['intent revision changed', { intent: persistedIntent({ revision: 2 }) }],
+    ['intent revoked/cancelled', { intent: persistedIntent({ status: 'cancelled' }) }],
+    ['intent authorization is not tool provenance', { intent: persistedIntent({ authorizationRef: 'admin:created-by-operator' }) }],
+    ['session not in external opt-in', { externalMessageSessionIds: [] }],
+    ['session not in wake allowlist', { allowedSessionIds: [SESSION_B], externalMessageSessionIds: [SESSION_A] }],
+    ['wake scope does not match the target Session', {
+      wake: intentWake({ contextScope: `session:${SESSION_B}` }),
+    }],
+    ['wake has no intent id', { wake: intentWake({ intentId: undefined }) }],
+  ]
+  for (const [name, overrides] of cases) {
+    const { prompt } = await deliveredPrompt(overrides)
+    assert.match(prompt, /Do not send external messages/, `${name} must fail closed`)
+    assert.doesNotMatch(prompt, /External messages may be sent/, `${name} must not grant guidance`)
+  }
 })
 
 test('H4 flush false or throw becomes uncertain and is never automatically resent', async () => {

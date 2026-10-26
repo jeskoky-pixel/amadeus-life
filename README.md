@@ -2,7 +2,7 @@
 
 Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住待办意图，在合适的时间提醒 DSH 重新思考，并管理活动、注意力和自主运行预算。
 
-> 当前为 1.0.0 候选版，代码在 [PR #2](https://github.com/jeskoky-pixel/amadeus-life/pull/2) 审阅中。尚未公开发行、安装到生产 DSH 或连接真实外部活动 Provider。
+> 当前为 1.0.1 补丁版本；1.0.0 已通过 [PR #2](https://github.com/jeskoky-pixel/amadeus-life/pull/2) 合并。1.0.1 尚未公开发行、未部署到生产 DSH，也未连接真实外部活动 Provider。
 
 ## 使用者可以做什么
 
@@ -14,7 +14,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 
 日常设置使用 DSH 原生页面，不需要手动改数据库。安装、配置、升级及回滚步骤见 [用户指南](docs/USER_GUIDE.md) 与 [安装说明](docs/INSTALL.md)。Life 可单独安装；State 和 Memory 是可选协作插件。
 
-**验证状态：178/178 项确定性测试通过。最终候选 tarball 在独立 DSH Desktop 中通过设置、首次配置、合成意图与本地活动、备份恢复、重启及停启/重装验收。跨插件联合运行按当前开发计划暂缓；真实平台发送、付款和生产部署未验收。**
+**验证状态：187/187 项确定性测试通过。1.0.0 已在独立 DSH Desktop 完成产品化验收；1.0.1 在隔离官方 DSH/QQ 环境完成受控外发唤醒验证（[公开报告](docs/verification/QQ_EXTERNAL_WAKE_2026-10-27.md)）：仅一次授权私有 Scene 的 `qq_send_message` 调用与一次 opt-in 关闭后的零发送对照，不代表普遍自主性或长期可靠性。生产部署、付款与生产平台发送未验收。**
 
 项目入口：[Amadeus-dsh](https://github.com/jeskoky-pixel/Amadeus-dsh)。开发顺序：P0。仓库已于 2026-10-25 根据用户要求公开，便于网页端审阅。
 
@@ -22,7 +22,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 
 未来通过 QQ 的事件、排队和唤醒接口协作；本版只产生本地重新考虑事件，不独立争抢 QQ 收发，也不盲发旧台词。不依赖 State 或向量记忆运行。
 
-基于官方 DSH 运行，不另建主 Agent 推理循环。本版本只管理“什么时候值得重新思考”：不发送消息、不调用模型、不自动执行外部动作、不读取私聊历史。需要受保护动作时必须有可信授权适配器；未配置时一律拒绝。
+基于官方 DSH 运行，不另建主 Agent 推理循环。Life 自身只管理“什么时候值得重新思考”：不发送平台消息、不调用模型、不自动执行外部动作、不读取私聊历史。需要受保护动作时必须有可信授权适配器；未配置时一律拒绝。唯一例外是管理员显式配置的外发提示 opt-in：只改变 wake prompt，实际发送仍由下游 QQ 工具与 Scene 授权决定。
 
 ## 已实现能力
 
@@ -42,12 +42,12 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 - **持久化**：`node:sqlite` + WAL + `BEGIN IMMEDIATE` + 唯一约束 + revision CAS；schema v9 为 v2–v8 的增量迁移；损坏或未知 schema 明确报错，绝不替换为空库。
 - **单运行时所有权**：适配器持有 SQLite lease；第二个仍在运行的适配器以明确健康状态失败关闭，不会执行启动恢复；只有持有者可释放；仅当记录的 PID 可证已死时才接管陈旧 lease。
 - **模块解耦**：运行时不 import 任何 QQ、Memory、State、Browser、Bilibili、Android、Games 或其他插件内部代码；源码 import 审计见测试 T10/T11。
-- **原生 DSH 设置页**：`dsh.client` 加载 `./client`，在 Settings 左侧注册 **Amadeus Life**；所有 23 个 Config 字段均为 volatile，满足 DSH `dsh-settings` 的表单投影/`whileServed` 契约；同时注册 `plugins.row.config` 配置页和 `plugins.detail.section` 基础配置卡。页面提供总览、首次配置向导（Core/Autonomous/Local Activity）、Session allowlist/binding 管理、意图、活动、预算与诊断。页面通过 owner-authenticated same-origin `/api/amadeus-life` 访问宿主，不直连 SQLite；配置保存/取消/恢复默认/冲突使用同一 Config Schema 与 Config Forms。字段为重启生效：保存后重启/重载插件才改变调度与工具，页面明确提示，不伪装即时生效。
-- **产品化交付**：版本 `1.0.0`；`npm run build` 生成 `lib/client.js`，`npm run package` 生成 `dist/amadeus-life-1.0.0.tgz`、SHA-256 与包元数据。安装、升级、备份/回滚见用户指南。
+- **原生 DSH 设置页**：`dsh.client` 加载 `./client`，在 Settings 左侧注册 **Amadeus Life**；所有 24 个 Config 字段均为 volatile，满足 DSH `dsh-settings` 的表单投影/`whileServed` 契约；同时注册 `plugins.row.config` 配置页和 `plugins.detail.section` 基础配置卡。页面提供总览、首次配置向导（Core/Autonomous/Local Activity）、Session allowlist/binding 管理、意图、活动、预算与诊断。页面通过 owner-authenticated same-origin `/api/amadeus-life` 访问宿主，不直连 SQLite；配置保存/取消/恢复默认/冲突使用同一 Config Schema 与 Config Forms。字段为重启生效：保存后重启/重载插件才改变调度与工具，页面明确提示，不伪装即时生效。
+- **产品化交付**：版本 `1.0.1`；`npm run build` 生成 `lib/client.js`，`npm run package` 生成 `dist/amadeus-life-1.0.1.tgz`、SHA-256 与包元数据。安装、升级、备份/回滚见用户指南。
 
-## 安装（尚未在本会话执行）
+## 安装
 
-本仓库不修改任何 DSH profile。Codex 审查通过后，由安装者使用 Harness 的 `plugin_manager` `install_bundle`，target 为本目录（或打包后的目录）绝对路径；不要手写 profile 的 `package.json` / `cordis.patch.yml`。
+本仓库不修改任何 DSH profile。由安装者使用 Plugin Manager / `plugin_manager` 安装**版本化 tarball** `dist/amadeus-life-1.0.1.tgz`（或本目录）；不要手写 profile 的 `package.json` / `cordis.patch.yml`。在已安装 1.0.0 的环境中，重装同一路径的旧包可能不会替换已安装版本；请使用新的 1.0.1 路径，安装后核对已安装版本与文件，再重启/重载插件。
 
 - 包：`@amadeus/life`，`type: module`，无运行时依赖、无安装脚本。
 - Bundle patch：`cordis.patch.yml` 插入 `amadeus-life` 行。
@@ -62,6 +62,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 | `databasePath` | `$DSH_HOME/amadeus-life/life.sqlite` | SQLite 账本绝对路径；留空使用默认路径，修改需重启 |
 | `tickIntervalMs` / `maxReviewBatch` | `1000` / `20` | Host tick 与每次到期复查上限；`0` 关闭自动 tick |
 | `wakeDeliveryEnabled` / `allowedSessionIds` | 关闭 / `[]` | 自主 Host wake 与合法 Session allowlist；默认关闭 |
+| `externalMessageSessionIds` | `[]` | 外发提示 opt-in：必须是 `allowedSessionIds` 的子集；仅持久化工具 intent 的 wake 获得提示，idle/管理员意图仍禁止；不授予 QQ 权限 |
 | `wakeIntervalSeconds` / `maxPerDrive` | `60` / `1` | 低频检查节拍与单次投递上限 |
 | `idleEnabled` / `idleTargetSessionId` | 关闭 / 空 | 空闲机会及目标（须在 allowlist） |
 | `idleWindowMinutes` / `quietAfterActivityMinutes` | `30` / `5` | idle 窗口与活动后安静期 |
@@ -73,13 +74,15 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 | `sharedReadEnabled` | 关闭 | 只读 `life_shared_read`，按 binding/grant 返回 |
 | `bootstrapEnabled` / `bootstrapPersonaName` | 关闭 / `Amadeus` | 首次创建稳定 Persona、每 Session private Scene/binding；冲突 fail closed |
 
+这些扁平字段是 DSH Config Forms / Plugin Manager 的管理员入口。旧的程序化嵌套配置（如 `wakeDelivery.allowedSessionIds`）仍为兼容性接受，但不应作为管理员配置方式。
+
 `tickIntervalMs` 的定时器会 `unref()`，dispose 时清除并关闭数据库。
 
 ## 服务与工具
 
 - Host 服务 `ctx.life`：既有意图/活动/事件/wake 证据方法，以及 v1.0 trusted 方法 `createPersona`、`createScene`、`bindSession`、`grantSceneShare`、`revokeSessionBinding`、`allocateIdleWake`、`noteSessionActivity`、`configureBudget`、`getBudget`、`consumeWakeBudget`、`recordTokenUsage`、`reserveCost`、`settleCost`、`releaseCost`、`getCostReservation`、`registerActivityProvider`、`startActivity`、`pauseActivity`、`resumeActivity`、`checkpointActivity`、`cancelActivity`、`reconcileActivity`。这些方法不注册为模型工具。
 - 模型工具默认仍为 9 个：`life_intent_create`、`life_intent_get`、`life_intent_list`、`life_intent_update`、`life_intent_cancel`、`life_activity_record`、`life_activity_get`、`life_activity_transition`、`life_health`。启用 `activityTools` 后增加 `life_activity_start/status/pause/resume/cancel/finish` 六个受控工具；启用 `sharedRead` 后增加 `life_shared_read`。新工具不接受 `scope/personaId/sceneId/principalId/providerId/trustedEvidence/evidenceRefs` 等越权字段，身份与 owner scope 从当前 Session binding 派生。
-- 默认关闭意味着不注册新工具、不投递 idle、不启动 Provider；管理员显式启用后仍不会真实外发平台消息。
+- 默认关闭意味着不注册新工具、不投递 idle、不启动 Provider。默认所有 wake 都提示禁止外发，idle wake 即使配置了 opt-in 也始终禁止。管理员可在扁平字段 `externalMessageSessionIds`（默认 `[]`，必须是 `allowedSessionIds` 的子集）中显式列出 Session。仅这些 Session 内、且持久化当前 intent 具有模型工具来源（`authorizationRef` = `life-tool:session:<targetSessionId>`）的 intent wake，才会在 prompt 中获准考虑使用现有外部工具；Host 读取持久化 intent，而不是 wake 行或 binding 字符串。管理员创建的 intent 仍禁止外发。该字段只改变 wake prompt，本身不授予 QQ 权限；下游 QQ Scene allowlist 与工具权限仍是最终授权。
 - 参数边界由适配器强制执行（DSH 原生 `tools.register` 不校验 JSON Schema）：每个工具只允许其声明字段，`scope`、`ownerScope`、`contextScope`、`authorizationRef`、`trustedEvidence` 等保留字段与未知字段一律 `LIFE_VALIDATION` 拒绝；`life_intent_update` 只显式复制 `description`/`reviewAt`/`relatedActivityId`，不会把模型参数展开到授权字段上。
 - 事件：每次 tick 产生的事件通过 `ctx.emit('life/reconsideration', event)` 发布；payload 只含引用（`eventId`、`intentId`、`intentRevision`、`reviewAt`、`contextScope`、`relatedActivityId`、`delivery: 'local-only'`），不含意图描述、授权引用或待发送文本。授权方可通过 `getIntent` 读取描述。
 
@@ -108,14 +111,14 @@ npm test
 node test/life-v1.test.js
 ```
 
-当前结果：178 个确定性测试全部通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 28、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 5、productization 8、backup 7、privacy 2）。覆盖 v2→v9/v3→v9/v4→v9/v5→v9/v6→v9/v7→v9/v8→v9 迁移与回滚、Host 消费证据与重启对账、身份隔离/撤销、idle 资格与投递、预算边界与共享 Persona/global token 预留、虚拟 Provider 生命周期与崩溃、资源互斥、用户消息优先暂停、共享只读视图、活动并发、付费预留、Session 撤销隔离、Provider 权限、重绑禁止、wakeId 幂等、首次运行 bootstrap、Config Schema/Forms/客户端注册、表单保存/取消/冲突、重复注册幂等/卸载清理、owner-auth HTTP、admin intent/activity/attention 权限、SQLite 一致快照/原子恢复/预检回滚、包清单。十场景映射记录保留在仓库内，不随安装包分发。Creator 沙箱的 `node --test` 仍有 runner `spawn EPERM` 限制；`npm test` 与直接测试文件通过。
+当前结果：187 个确定性测试全部通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 36、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 6、productization 8、backup 7、privacy 2）。覆盖 v2→v9/v3→v9/v4→v9/v5→v9/v6→v9/v7→v9/v8→v9 迁移与回滚、Host 消费证据与重启对账、身份隔离/撤销、idle 资格与投递、预算边界与共享 Persona/global token 预留、虚拟 Provider 生命周期与崩溃、资源互斥、用户消息优先暂停、共享只读视图、活动并发、付费预留、Session 撤销隔离、Provider 权限、重绑禁止、wakeId 幂等、外发 opt-in 的持久化工具 intent provenance 与失败关闭、首次运行 bootstrap、Config Schema/Forms/客户端注册、表单保存/取消/冲突、重复注册幂等/卸载清理、owner-auth HTTP、admin intent/activity/attention 权限、SQLite 一致快照/原子恢复/预检回滚、包清单。十场景映射记录保留在仓库内，不随安装包分发。Creator 沙箱的 `node --test` 仍有 runner `spawn EPERM` 限制；`npm test` 与直接测试文件通过。
 
 
 
 ## 已知限制（未验收部分）
 
 - 独立真实 DSH Desktop 0.2.1-rc.3 已验证无用户输入 idle、模型调用受控本地 Provider 工具、插件停启与恢复，以及 v7→v8 开发库冷迁移。v8→v9 真实隔离开发库冷备份、迁移与恢复已通过；真实 v9 无输入唤醒、本地虚拟活动、旧工具拒绝、预算拒绝、身份重绑拒绝和首次预设启动也已通过。外部 Provider 与实际付费仍未验收。
-- 事件仅本地 outbox 发布；Host wake 仅在管理员显式启用并配置 allowlist/预算时投递，仍不发送平台消息。
+- 事件仅本地 outbox 发布；Host wake 仅在管理员显式启用并配置 allowlist/预算时投递。Life 自身仍不发送平台消息；1.0.1 的 `externalMessageSessionIds` opt-in 只改变 wake prompt，实际调用仍受下游 QQ 工具与 Scene 授权约束，且目前只验证过一次隔离场景，不代表普遍自主性或长期可靠性。
 - 未接入真实外部 Activity Provider、平台发送器、付款或发布流程；`LocalVirtualProvider` 仅用于确定性本地验证。新活动/共享工具默认关闭。
 - token 仅接受官方 `assistant/message.data.usage`；缺失时显示 `usage_unknown` 并保留保守预留，不宣称真实成本结算。活动并发/付费预留接口未接真实支付 Provider；多进程真实竞争与平台验收未完成。
 

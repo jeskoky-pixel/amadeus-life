@@ -134,7 +134,10 @@ export function validateField(field, value) {
     if (actual.length > maxItems) return 'tooManyItems';
     for (const entry of actual) {
       if (typeof entry !== 'string' || entry.length === 0 || entry.length > 200) return 'invalidArrayItem';
-      if (field.key === 'allowedSessionIds' && !/^session-[A-Za-z0-9-]+$/.test(entry)) return 'invalidSessionId';
+      if (
+        (field.key === 'allowedSessionIds' || field.key === 'externalMessageSessionIds') &&
+        !/^session-[A-Za-z0-9-]+$/.test(entry)
+      ) return 'invalidSessionId';
     }
     return null;
   }
@@ -166,6 +169,13 @@ export function validateAll(values, fields) {
     if (error) errors[field.key] = error;
   }
   const allowed = Array.isArray(input.allowedSessionIds) ? input.allowedSessionIds : [];
+  const external = Array.isArray(input.externalMessageSessionIds) ? input.externalMessageSessionIds : [];
+  if (
+    errors.externalMessageSessionIds === undefined &&
+    external.some((entry) => !allowed.includes(entry))
+  ) {
+    errors.externalMessageSessionIds = 'externalMessageNotAllowed';
+  }
   const target = input.idleTargetSessionId;
   if (input.idleEnabled === true && !allowed.includes(target) && errors.idleTargetSessionId === undefined) {
     errors.idleTargetSessionId = 'idleTargetNotAllowed';

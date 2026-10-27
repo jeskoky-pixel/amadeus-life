@@ -32,12 +32,12 @@ test('PROD1 Config schema and flat normalization are authoritative and validated
   assert.ok(externalField, 'flat external-message opt-in field must exist')
   assert.equal(externalField.type, 'array')
   assert.deepEqual(externalField.default, [])
-  // The explanation must state the exact scope: tool-authorized intent wakes
-  // only, and no QQ Scene permission grant.
+  // The explanation must distinguish prompt guidance from QQ execution permission.
   assert.match(externalField.zh.help, /intent wake/)
   assert.match(externalField.zh.help, /QQ Scene/)
   assert.match(externalField.zh.help, /不会授予/)
-  assert.match(externalField.en.help, /tool-authorized intent wakes/)
+  assert.match(externalField.en.help, /persisted model-tool provenance/)
+  assert.match(externalField.en.help, /non-sending guidance/)
   assert.match(externalField.en.help, /QQ Scene/)
   assert.match(externalField.en.help, /no QQ Scene permission/)
   const valid = Config['~standard'].validate(CONFIG_DEFAULTS)

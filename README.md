@@ -62,7 +62,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 | `databasePath` | `$DSH_HOME/amadeus-life/life.sqlite` | SQLite 账本绝对路径；留空使用默认路径，修改需重启 |
 | `tickIntervalMs` / `maxReviewBatch` | `1000` / `20` | Host tick 与每次到期复查上限；`0` 关闭自动 tick |
 | `wakeDeliveryEnabled` / `allowedSessionIds` | 关闭 / `[]` | 自主 Host wake 与合法 Session allowlist；默认关闭 |
-| `externalMessageSessionIds` | `[]` | 外发提示 opt-in：必须是 `allowedSessionIds` 的子集；仅持久化工具 intent 的 wake 获得提示，idle/管理员意图仍禁止；不授予 QQ 权限 |
+| `externalMessageSessionIds` | `[]` | 外发提示 opt-in：必须是 `allowedSessionIds` 的子集；仅持久化模型工具来源 intent 的 wake 获得可考虑使用外部工具的提示，idle/管理员意图保持非发送提示；实际外发由 QQ Scene Guard 决定 |
 | `wakeIntervalSeconds` / `maxPerDrive` | `60` / `1` | 低频检查节拍与单次投递上限 |
 | `idleEnabled` / `idleTargetSessionId` | 关闭 / 空 | 空闲机会及目标（须在 allowlist） |
 | `idleWindowMinutes` / `quietAfterActivityMinutes` | `30` / `5` | idle 窗口与活动后安静期 |

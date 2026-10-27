@@ -37,12 +37,12 @@ export const CONFIG_FIELDS = Object.freeze([
     restart: true,
     group: 'common',
     zh: {
-      label: '外发授权 Session',
-      help: '必须是 Session allowlist 的子集；默认空列表即完全禁止。仅允许这些 Session 内由模型工具授权的 intent wake 外发；idle 与其他意图仍禁止，且不会授予任何 QQ Scene 权限。',
+      label: '外发提示 Session',
+      help: '必须是 Session allowlist 的子集；默认空列表保持非发送提示。仅这些 Session 内具有持久化模型工具来源的 intent wake 会收到可考虑使用外部工具的提示；idle 与其他意图仍保持非发送提示。本设置不会授予 QQ Scene 权限，实际 QQ 外发由 QQ Scene Guard 决定。',
     },
     en: {
       label: 'External-message Session opt-in',
-      help: 'Must be a subset of the Session allowlist; empty by default means deny all. Only tool-authorized intent wakes in these Sessions may send externally; idle and other intents remain blocked, and this grants no QQ Scene permission.',
+      help: 'Must be a subset of the Session allowlist; an empty list keeps non-sending guidance. Only intent wakes with persisted model-tool provenance in these Sessions receive guidance to consider external tools; idle and other intents keep non-sending guidance. This grants no QQ Scene permission; QQ Scene Guard decides whether a send is allowed.',
     },
   },
   {

@@ -38,7 +38,7 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
     bootstrapPersonaName: Amadeus
 ```
 
-`databasePath` 默认是当前 DSH_HOME/amadeus-life/life.sqlite。配置必须由可信管理员决定，模型工具不接受数据库路径。`tickIntervalMs` 可为 0（手动 tick）；每次最多检查 `maxReviewBatch` 项。`externalMessageSessionIds` 默认空列表即完全禁止外发；非空时只对其中 Session 内、持久化 intent 具有模型工具来源的 wake 改变 prompt 提示，idle 与管理员创建的 intent 仍禁止，且不授予 QQ 权限。停用时清理定时器、lease 与连接；卸载不会删除数据库。
+`databasePath` 默认是当前 DSH_HOME/amadeus-life/life.sqlite。配置必须由可信管理员决定，模型工具不接受数据库路径。`tickIntervalMs` 可为 0（手动 tick）；每次最多检查 `maxReviewBatch` 项。`externalMessageSessionIds` 默认空列表使 wake 保持非发送提示；非空时只对其中 Session 内、持久化 intent 具有模型工具来源的 wake 改变 prompt 提示，idle 与管理员创建的 intent 仍保持非发送提示。此设置不授予 QQ 权限，实际外发由 QQ Scene Guard 决定。停用时清理定时器、lease 与连接；卸载不会删除数据库。
 
 普通用户先看单屏 [SETUP](SETUP.md)：三种预设、Session allowlist 说明、首次 bootstrap、admin 自定义绑定与健康错误。`bootstrap` 默认关闭；它会在 Life 行启用时创建稳定默认 Persona、每 Session 一个 private Scene 与 binding，同配置重复加载幂等，已有不同 binding 时 fail closed。下面的完整配置只给需要精细控制的 Advanced 管理员。
 

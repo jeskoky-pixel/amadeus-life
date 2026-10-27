@@ -1,11 +1,11 @@
-# Amadeus Life 1.0.0 — User Guide
+# Amadeus Life 1.0.1 — User Guide
 
 Amadeus Life is a DSH Desktop plugin for durable intents, activities, optional autonomous wake/idle, budgets, and diagnostics. It does **not** send platform messages, run a second Agent, or perform payments.
 
 ## Install and open
 
-1. In DSH Plugin Manager, choose **Add plugin**, enter/paste the local tarball path `dist/amadeus-life-1.0.0.tgz`, install, and enable the resulting **Amadeus Life** row. Do not hand-edit a production profile.
-2. Wait for the bundle to report installed/enabled. A Host 200 alone is not enough; verify the page and console.
+1. In DSH Plugin Manager, choose **Add plugin**, enter/paste the local versioned tarball path `dist/amadeus-life-1.0.1.tgz`, install, and enable the resulting **Amadeus Life** row. Use a distinct versioned artifact: reinstalling an updated tarball at the same installed path may not replace an earlier version. Do not hand-edit a production profile.
+2. Verify Plugin Manager reports version 1.0.1 and the expected files, then restart/reload the plugin. A Host 200 alone is not enough; verify the page and console.
 3. Open **DSH Settings**. The left navigation contains **Amadeus Life / Amadeus 生活**. The label follows the browser UI language (Chinese is preferred when available).
 4. The page works while the plugin is active; if the Host settings API is unavailable, it shows a clear disconnected/error state instead of pretending data exists.
 
@@ -57,8 +57,9 @@ Back up the database (and any `-wal`/`-shm` files) before upgrading. Use the GUI
 ## Boundaries
 
 - Autonomous delivery and local activity/shared tools are off by default.
-- No external Provider, payment, publish, deploy, or platform sender is implemented.
+- The flat `externalMessageSessionIds` field defaults to empty (all wakes non-sending) and must be a subset of `allowedSessionIds`. Non-empty guidance applies only to a wake whose persisted current intent has model-tool provenance; idle wakes and administrator-created intents remain prohibited. It changes only the wake prompt and grants no QQ permission; the downstream QQ Scene allowlist and tool authorization remain authoritative.
+- No external Provider, payment, publish, deploy, or platform sender is implemented by Life itself.
 - The settings API is owner-authenticated and same-origin; browser code never opens SQLite.
 - The GUI can request cancellation only; terminal Provider state requires trusted Provider evidence.
 
-Version 1.0.0 · schema v9 · DSH Desktop 0.2.1-rc.2 or newer.
+Version 1.0.1 · schema v9 · DSH Desktop 0.2.1-rc.2 or newer.

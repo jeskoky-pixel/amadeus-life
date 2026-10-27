@@ -24,9 +24,22 @@ const A = 'session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const B = 'session-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 
 test('PROD1 Config schema and flat normalization are authoritative and validated', () => {
-  assert.equal(CONFIG_FIELDS.length, 23)
+  assert.equal(CONFIG_FIELDS.length, 24)
   assert.equal(CONFIG_DEFAULTS.wakeDeliveryEnabled, false)
   assert.equal(CONFIG_DEFAULTS.bootstrapEnabled, false)
+  assert.deepEqual(CONFIG_DEFAULTS.externalMessageSessionIds, [])
+  const externalField = CONFIG_FIELDS.find((field) => field.key === 'externalMessageSessionIds')
+  assert.ok(externalField, 'flat external-message opt-in field must exist')
+  assert.equal(externalField.type, 'array')
+  assert.deepEqual(externalField.default, [])
+  // The explanation must distinguish prompt guidance from QQ execution permission.
+  assert.match(externalField.zh.help, /intent wake/)
+  assert.match(externalField.zh.help, /QQ Scene/)
+  assert.match(externalField.zh.help, /不会授予/)
+  assert.match(externalField.en.help, /persisted model-tool provenance/)
+  assert.match(externalField.en.help, /non-sending guidance/)
+  assert.match(externalField.en.help, /QQ Scene/)
+  assert.match(externalField.en.help, /no QQ Scene permission/)
   const valid = Config['~standard'].validate(CONFIG_DEFAULTS)
   assert.equal(valid.issues, undefined)
   for (const field of CONFIG_FIELDS) {
@@ -38,6 +51,7 @@ test('PROD1 Config schema and flat normalization are authoritative and validated
     ...CONFIG_DEFAULTS,
     wakeDeliveryEnabled: true,
     allowedSessionIds: [A, B],
+    externalMessageSessionIds: [A, A],
     idleEnabled: true,
     idleTargetSessionId: A,
     wakeBudgetEnabled: true,
@@ -48,11 +62,24 @@ test('PROD1 Config schema and flat normalization are authoritative and validated
   })
   assert.equal(autonomous.wakeDelivery.enabled, true)
   assert.deepEqual(autonomous.wakeDelivery.allowedSessionIds, [A, B])
+  assert.deepEqual(autonomous.wakeDelivery.externalMessageSessionIds, [A])
   assert.equal(autonomous.wakeDelivery.intervalMs, 90_000)
   assert.equal(autonomous.idle.targetSessionId, A)
   assert.equal(autonomous.activityTools.enabled, false)
   assert.equal(autonomous.bootstrap.enabled, true)
   assert.equal(autonomous.wakeBudget.activityLimit, 1)
+  // Default deny: omitting the flat field maps to the empty nested opt-in.
+  const deny = normalizeLifeConfig({ ...CONFIG_DEFAULTS, allowedSessionIds: [A, B] })
+  assert.deepEqual(deny.wakeDelivery.externalMessageSessionIds, [])
+  // Strict subset: an entry outside allowedSessionIds is rejected.
+  assert.throws(
+    () => normalizeLifeConfig({ ...CONFIG_DEFAULTS, allowedSessionIds: [A], externalMessageSessionIds: [B] }),
+    /externalMessageSessionIds must be in allowedSessionIds/,
+  )
+  assert.throws(
+    () => normalizeLifeConfig({ ...CONFIG_DEFAULTS, allowedSessionIds: [A], externalMessageSessionIds: ['not-a-session'] }),
+    /externalMessageSessionIds must contain DSH Session ids/,
+  )
   assert.throws(() => normalizeLifeConfig({ ...CONFIG_DEFAULTS, allowedSessionIds: ['not-a-session'] }), /DSH Session/)
   assert.throws(
     () => normalizeLifeConfig({ ...CONFIG_DEFAULTS, allowedSessionIds: [A], idleEnabled: true, idleTargetSessionId: B }),
@@ -70,7 +97,8 @@ test('PROD2 built client is a compilable lazy module registering the native sett
   assert.equal(existsSync(bundlePath), true, 'run npm run build first')
   const bundle = readFileSync(bundlePath, 'utf8')
   for (const marker of ['settings.section', 'plugins.detail.section', 'plugins.row.config', 'configForms', 'amadeus-life', 'Amadeus Life',
-    'intents/create', 'activities/start', 'attention/yield', '/backups', 'createBackup']) {
+    'intents/create', 'activities/start', 'attention/yield', '/backups', 'createBackup',
+    'externalMessageSessionIds', 'QQ Scene']) {
     assert.match(bundle, new RegExp(marker.replace('.', '\\.')))
   }
   for (const tab of ['overview', 'setup', 'sessions', 'intents', 'activities', 'budget', 'advanced']) {
@@ -301,6 +329,22 @@ test('PROD6 config form draft/save/cancel/conflict operations are bounded and re
   assert.equal(validateField(byKey.wakeIntervalSeconds, 10), 'belowMin')
   assert.equal(validateField(byKey.allowedSessionIds, []), null)
   assert.equal(validateField(byKey.allowedSessionIds, ['bad']), 'invalidSessionId')
+  assert.equal(validateField(byKey.externalMessageSessionIds, []), null)
+  assert.equal(validateField(byKey.externalMessageSessionIds, [A]), null)
+  assert.equal(validateField(byKey.externalMessageSessionIds, ['bad']), 'invalidSessionId')
+  assert.equal(validateField(byKey.externalMessageSessionIds, 'not-an-array'), 'invalidArray')
+  assert.equal(
+    validateAll({ ...CONFIG_DEFAULTS, allowedSessionIds: [A], externalMessageSessionIds: [A] }, CONFIG_FIELDS).externalMessageSessionIds,
+    undefined,
+  )
+  assert.equal(
+    validateAll({ ...CONFIG_DEFAULTS, allowedSessionIds: [A], externalMessageSessionIds: [B] }, CONFIG_FIELDS).externalMessageSessionIds,
+    'externalMessageNotAllowed',
+  )
+  assert.equal(
+    validateAll({ ...CONFIG_DEFAULTS, allowedSessionIds: [], externalMessageSessionIds: [A] }, CONFIG_FIELDS).externalMessageSessionIds,
+    'externalMessageNotAllowed',
+  )
   assert.equal(validateField(byKey.bootstrapPersonaName, 'Amadeus'), null)
   assert.equal(validateField(byKey.bootstrapPersonaName, 42), 'invalidString')
   assert.equal(validateField(byKey.wakeDeliveryEnabled, true), null)
@@ -321,6 +365,12 @@ test('PROD6 config form draft/save/cancel/conflict operations are bounded and re
   assert.equal(isDirty(changed, snapshot, CONFIG_FIELDS), true)
   assert.deepEqual(buildSetOps(changed, snapshot, CONFIG_FIELDS), [
     { op: 'set', path: ['wakeDeliveryEnabled'], value: true },
+  ])
+  // The external-message opt-in is an independent flat field: editing only it
+  // produces exactly one Config operation and does not touch the allowlist.
+  const externalChanged = setDraftValue(draft, 'externalMessageSessionIds', [A])
+  assert.deepEqual(buildSetOps(externalChanged, snapshot, CONFIG_FIELDS), [
+    { op: 'set', path: ['externalMessageSessionIds'], value: [A] },
   ])
   assert.equal(buildUnsetAllOps(CONFIG_FIELDS).length, CONFIG_FIELDS.length)
   assert.deepEqual(buildUnsetAllOps(CONFIG_FIELDS)[0], { op: 'unset', path: ['wakeDeliveryEnabled'] })
@@ -448,7 +498,7 @@ test('PROD8 rendered preset labels keep 本地活动/Local activity while budget
 test('PROD4 package manifest includes Host, client, schema, locale, docs, and explicit version', () => {
   const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
   assert.equal(manifest.name, '@amadeus/life')
-  assert.equal(manifest.version, '1.0.0')
+  assert.equal(manifest.version, '1.0.1')
   assert.equal(manifest.exports['./client'], './lib/client.js')
   assert.equal(manifest.dsh.client.platform, 'web')
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-settings'))

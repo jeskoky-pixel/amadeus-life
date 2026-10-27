@@ -33,6 +33,7 @@ export function isFlatConfig(raw) {
     'sharedReadEnabled',
     'bootstrapEnabled',
     'allowedSessionIds',
+    'externalMessageSessionIds',
   ].some((key) => Object.hasOwn(raw ?? {}, key))
 }
 
@@ -76,6 +77,16 @@ export function normalizeLifeConfig(raw = {}) {
   for (const id of allowed) {
     if (!isDshSessionScope(`session:${id}`)) throw new LifeValidationError('allowedSessionIds must contain DSH Session ids')
   }
+  const externalMessageSessionIds = []
+  for (const id of values.externalMessageSessionIds) {
+    if (!isDshSessionScope(`session:${id}`)) {
+      throw new LifeValidationError('externalMessageSessionIds must contain DSH Session ids')
+    }
+    if (!allowed.includes(id)) {
+      throw new LifeValidationError('externalMessageSessionIds must be in allowedSessionIds')
+    }
+    if (!externalMessageSessionIds.includes(id)) externalMessageSessionIds.push(id)
+  }
   if (values.idleEnabled && !allowed.includes(values.idleTargetSessionId)) {
     throw new LifeValidationError('idleTargetSessionId must be in allowedSessionIds')
   }
@@ -93,6 +104,7 @@ export function normalizeLifeConfig(raw = {}) {
     wakeDelivery: {
       enabled: values.wakeDeliveryEnabled,
       allowedSessionIds: allowed,
+      externalMessageSessionIds,
       intervalMs: values.wakeIntervalSeconds * 1000,
       maxPerDrive: values.maxPerDrive,
     },

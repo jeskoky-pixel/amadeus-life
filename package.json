@@ -1,6 +1,6 @@
 {
   "name": "@amadeus/life",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "license": "UNLICENSED",
   "description": "Amadeus Life: durable intents, activities, autonomous wake, budgets, and a native DSH settings page.",

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { LifeCore } from '../src/core.js'
-import { apply } from '../src/index.js'
+import { Config, apply } from '../src/index.js'
+import { CONFIG_DEFAULTS } from '../src/config-fields.js'
 import { buildSetup, validateSetup, writeSetupFile } from '../scripts/life-setup.mjs'
 
 const A = 'session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -182,6 +183,39 @@ test('BOOT3 core preset creates nothing and generator output is accepted', () =>
   })
   assert.equal(generatedHost.provided.get('life').getHealth().setup.state, 'ready')
   generatedHost.dispose()
+})
+
+test('BOOT6 flat external-message opt-in activates through DSH Config and rejects a non-subset', () => {
+  const flat = {
+    ...CONFIG_DEFAULTS,
+    databasePath: join(tempDir(), 'life.sqlite'),
+    tickIntervalMs: 0,
+    wakeDeliveryEnabled: false,
+    allowedSessionIds: [A],
+    externalMessageSessionIds: [A],
+  }
+  // DSH validates the flat Config schema and supplies the resulting values to
+  // the row; activation must accept that exact shape.
+  const validated = Config['~standard'].validate(flat)
+  assert.equal(validated.issues, undefined)
+  const host = fakeCtx()
+  apply(host.ctx, validated.value)
+  const life = host.provided.get('life')
+  assert.ok(life, 'flat config with an external-message opt-in must activate')
+  assert.equal(life.getHealth().setup.state, 'disabled')
+  host.dispose()
+
+  // A flat opt-in outside the allowlist fails closed before any Life state is
+  // created; this is the same strict-subset rule as the nested runtime config.
+  assert.throws(
+    () => apply(fakeCtx().ctx, {
+      ...flat,
+      databasePath: join(tempDir(), 'invalid.sqlite'),
+      allowedSessionIds: [A],
+      externalMessageSessionIds: [B],
+    }),
+    /externalMessageSessionIds must be in allowedSessionIds/,
+  )
 })
 
 test('BOOT4 invalid config is rejected and output files are exclusive', () => {

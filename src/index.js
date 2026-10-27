@@ -59,11 +59,11 @@ const DEFAULT_WAKE_INTERVAL_MS = 60_000
  * Validate the administrator-only wake delivery configuration. Defaults to
  * disabled; a model or peer can never change it at runtime.
  * @param {unknown} raw - row config value.
- * @returns {{enabled: boolean, allowedSessionIds: string[], intervalMs: number, maxPerDrive: number}} config.
+ * @returns {{enabled: boolean, allowedSessionIds: string[], externalMessageSessionIds: string[], intervalMs: number, maxPerDrive: number}} config.
  */
 function parseWakeDelivery(raw) {
   if (raw === undefined) {
-    return { enabled: false, allowedSessionIds: [], intervalMs: DEFAULT_WAKE_INTERVAL_MS, maxPerDrive: 1 }
+    return { enabled: false, allowedSessionIds: [], externalMessageSessionIds: [], intervalMs: DEFAULT_WAKE_INTERVAL_MS, maxPerDrive: 1 }
   }
   if (typeof raw !== 'object' || raw === null) {
     throw new LifeValidationError('wakeDelivery must be an object')
@@ -85,6 +85,17 @@ function parseWakeDelivery(raw) {
   if (allowedSessionIds.length > 100) {
     throw new LifeValidationError('wakeDelivery.allowedSessionIds accepts at most 100 entries')
   }
+  if (raw.externalMessageSessionIds !== undefined && !Array.isArray(raw.externalMessageSessionIds)) {
+    throw new LifeValidationError('wakeDelivery.externalMessageSessionIds must be an array')
+  }
+  const externalMessageSessionIds = []
+  for (const entry of raw.externalMessageSessionIds ?? []) {
+    const value = requireString(entry, 'wakeDelivery.externalMessageSessionIds[]', 200)
+    if (!allowedSessionIds.includes(value)) {
+      throw new LifeValidationError('wakeDelivery.externalMessageSessionIds must be in allowedSessionIds')
+    }
+    if (!externalMessageSessionIds.includes(value)) externalMessageSessionIds.push(value)
+  }
   const intervalMs =
     raw.intervalMs === undefined
       ? DEFAULT_WAKE_INTERVAL_MS
@@ -93,7 +104,7 @@ function parseWakeDelivery(raw) {
     raw.maxPerDrive === undefined
       ? 1
       : assertInteger(raw.maxPerDrive, 'wakeDelivery.maxPerDrive', { min: 1, max: 5 })
-  return { enabled: raw.enabled === true, allowedSessionIds, intervalMs, maxPerDrive }
+  return { enabled: raw.enabled === true, allowedSessionIds, externalMessageSessionIds, intervalMs, maxPerDrive }
 }
 
 function parseIdle(raw, allowedSessionIds) {
@@ -561,6 +572,7 @@ export function apply(ctx, config = {}) {
     ownerId,
     enabled: delivery.enabled,
     allowedSessionIds: delivery.allowedSessionIds,
+    externalMessageSessionIds: delivery.externalMessageSessionIds,
     intervalMs: delivery.intervalMs,
     maxPerDrive: delivery.maxPerDrive,
     idle: idleConfig,

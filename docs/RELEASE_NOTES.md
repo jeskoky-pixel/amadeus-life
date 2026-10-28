@@ -10,7 +10,7 @@ Workspace-scoped Life scheduling and independent console.
 - GUI adds a Workspace page for binding, explicit activation and session-rule editing; existing Settings entry/overview remains.
 - SQLite schema v10 adds workspace binding/activation markers and durable session rules. v2–v9 migrate additively; backup before upgrade and use the documented dry-run/atomic restore for rollback.
 - `externalMessageSessionIds` remains a separate default-empty prompt opt-in; no QQ send permission is granted. State is optional and absent-safe.
-- Validation: deterministic tests cover registry membership/late join/removal, legacy non-widening, stable Persona/restart, modes, independent/global limits, owner API, GUI/bundle registration, backup/restore, and prior v1 behavior. Real isolated DSH GUI acceptance remains Codex's step.
+- Validation: deterministic tests cover registry membership/late join/removal, legacy non-widening, stable Persona/restart, modes, independent/global limits, owner API, GUI/bundle registration, backup/restore, and prior v1 behavior. Isolated DSH GUI and four-plugin checks are recorded in the [joint report](https://github.com/jeskoky-pixel/amadeus-qq/blob/main/docs/verification/FOUR_PLUGIN_V11_JOINT_2026-10-28.md); real NapCat/Life external-delivery acceptance remains open.
 
 ## 1.0.1 — 2026-10-27
 

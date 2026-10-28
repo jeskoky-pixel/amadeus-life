@@ -70,6 +70,9 @@ export class WakeHost {
     ownerId,
     enabled = false,
     allowedSessionIds,
+    getAllowedSessionIds,
+    getSessionQuietHours,
+    isSessionDeliverable,
     externalMessageSessionIds = [],
     intervalMs,
     maxPerDrive,
@@ -87,6 +90,9 @@ export class WakeHost {
     this.listenerRegistrar = undefined
     this.allowed = [...new Set(allowedSessionIds ?? [])]
     this.allowedSet = new Set(this.allowed)
+    this.getAllowedSessionIds = typeof getAllowedSessionIds === 'function' ? getAllowedSessionIds : null
+    this.getSessionQuietHours = typeof getSessionQuietHours === 'function' ? getSessionQuietHours : null
+    this.isSessionDeliverable = typeof isSessionDeliverable === 'function' ? isSessionDeliverable : null
     this.externalMessageSessionIds = new Set(externalMessageSessionIds)
     this.intervalMs = intervalMs
     this.maxPerDrive = maxPerDrive
@@ -105,7 +111,7 @@ export class WakeHost {
     // Both the trusted `enabled` flag and a non-empty administrator allowlist
     // are required; an allowlist alone must never enable delivery.
     this.requested = enabled === true
-    this.enabled = this.requested && this.allowed.length > 0
+    this.enabled = this.requested && (this.allowed.length > 0 || this.getAllowedSessionIds !== null)
     this.missing = []
     this.bound = false
     this.bindingGeneration = 0
@@ -132,6 +138,24 @@ export class WakeHost {
   }
 
   /** @returns {Record<string, unknown>} trusted delivery health snapshot. */
+  /** Current trusted targets; workspace policy is re-read on every drive. */
+  #targets() {
+    if (this.getAllowedSessionIds === null) return this.allowed
+    try {
+      const value = this.getAllowedSessionIds()
+      if (!Array.isArray(value)) return []
+      return [...new Set(value.filter((entry) => typeof entry === 'string'))]
+    } catch (error) {
+      this.lastError = messageOf(error)
+      return []
+    }
+  }
+
+  /** @param {string} sessionId */
+  #isAllowed(sessionId) {
+    return this.#targets().includes(sessionId)
+  }
+
   health() {
     const usable = this.missing.length === 0 && this.bound
     const hasUnresolved = this.#hasUnresolvedWake()
@@ -159,7 +183,7 @@ export class WakeHost {
       reason,
       enabled: this.enabled,
       bound: this.bound,
-      allowedSessions: this.allowed.length,
+      allowedSessions: this.#targets().length,
       intervalMs: this.intervalMs,
       maxPerDrive: this.maxPerDrive,
       timerActive: this.timer !== null,
@@ -185,7 +209,7 @@ export class WakeHost {
 
   /** @returns {boolean} whether any allowlisted Session has an unreconciled wake. */
   #hasUnresolvedWake() {
-    for (const sessionId of this.allowed) {
+    for (const sessionId of this.#targets()) {
       try {
         if (this.core.hasUnreconciledWakeForSession(sessionId)) return true
       } catch {
@@ -308,11 +332,12 @@ export class WakeHost {
       this.#maybeAllocateIdleWake()
       this.core.tick()
       this.core.prepareDueWakes({
-        limit: Math.min(100, Math.max(10, this.maxPerDrive * Math.max(1, this.allowed.length) * 2)),
+        limit: Math.min(100, Math.max(10, this.maxPerDrive * Math.max(1, this.#targets().length) * 2)),
       })
       let claimed = 0
-      for (const sessionId of this.allowed) {
+      for (const sessionId of this.#targets()) {
         if (this.disposed || claimed >= this.maxPerDrive) break
+        if (this.#inSessionQuietHours(sessionId, this.clock())) continue
         const bindingGeneration = this.bindingGeneration
         if (!this.#isCurrentBinding(bindingGeneration)) break
         if (this.core.hasUnreconciledWakeForSession(sessionId)) continue
@@ -359,7 +384,11 @@ export class WakeHost {
   #maybeAllocateIdleWake() {
     if (this.idle.enabled !== true || this.disposed || !this.bound) return
     const sessionId = this.idle.targetSessionId
-    if (typeof sessionId !== 'string' || !this.allowedSet.has(sessionId)) return
+    if (typeof sessionId !== 'string' || !this.#isAllowed(sessionId)) return
+    if (this.#inSessionQuietHours(sessionId, this.clock())) {
+      this.lastIdle = { created: false, reason: 'session_quiet_hours', at: this.core.iso(this.clock()) }
+      return
+    }
     const nowMs = this.clock()
     if (this.currentTurn.has(sessionId)) {
       this.lastIdle = { created: false, reason: 'session_turn_active', at: this.core.iso(nowMs) }
@@ -394,6 +423,32 @@ export class WakeHost {
     return start < end ? hour >= start && hour < end : hour >= start || hour < end
   }
 
+  /** @param {string} sessionId @param {number} nowMs */
+  #inSessionQuietHours(sessionId, nowMs) {
+    if (this.getSessionQuietHours === null) return false
+    let hours
+    try {
+      hours = this.getSessionQuietHours(sessionId)
+    } catch {
+      return true
+    }
+    if (!Array.isArray(hours) || hours.length !== 2) return false
+    const [start, end] = hours.map((value) => Number(value))
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start === end) return false
+    const hour = new Date(nowMs).getUTCHours()
+    return start < end ? hour >= start && hour < end : hour >= start || hour < end
+  }
+
+  /** @param {string} sessionId */
+  #isDeliverable(sessionId) {
+    if (this.isSessionDeliverable === null) return true
+    try {
+      return this.isSessionDeliverable(sessionId) === true
+    } catch {
+      return false
+    }
+  }
+
   /**
    * Deliver one claimed wake: resolve, recheck, followup, flush, admission.
    * The binding generation captured at claim time is rechecked after every
@@ -419,6 +474,9 @@ export class WakeHost {
     if (resolved === null || typeof resolved !== 'object' || resolved.error !== undefined || resolved.agent === undefined) {
       return this.#uncertain(wake, 'resolve failed')
     }
+    if (!this.#isDeliverable(wake.targetSessionId)) {
+      return this.#uncertain(wake, 'Session is no longer an eligible workspace member')
+    }
 
     let recheck
     try {
@@ -429,6 +487,9 @@ export class WakeHost {
     if (recheck.valid !== true) return { status: 'superseded', wakeId: wake.id, reason: recheck.reason }
     if (!this.#isCurrentBinding(bindingGeneration)) {
       return this.#uncertain(wake, 'host binding changed before followup')
+    }
+    if (!this.#isDeliverable(wake.targetSessionId)) {
+      return this.#uncertain(wake, 'Session membership changed immediately before followup')
     }
 
     // External-message guidance is derived from the persisted current intent,
@@ -506,7 +567,7 @@ export class WakeHost {
     if (wake.origin === 'idle') return false
     const targetSessionId = wake.targetSessionId
     if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) return false
-    if (!this.allowedSet.has(targetSessionId)) return false
+    if (!this.#isAllowed(targetSessionId)) return false
     if (!this.externalMessageSessionIds.has(targetSessionId)) return false
     if (typeof wake.intentId !== 'string' || wake.intentId.length === 0) return false
     if (wake.contextScope !== `session:${targetSessionId}`) return false
@@ -558,7 +619,7 @@ export class WakeHost {
     if (this.disposed || event === null || typeof event !== 'object') return
     const sessionId = typeof session?.id === 'string' ? session.id : undefined
     if (sessionId === undefined || typeof event.type !== 'string') return
-    if (!this.allowedSet.has(sessionId)) return
+    if (!this.#isAllowed(sessionId)) return
     try {
       this.core.noteSessionActivity({ targetSessionId: sessionId, at: this.core.iso() })
     } catch {
@@ -899,7 +960,7 @@ export class WakeHost {
     let executed = 0
     let incomplete = false
     try {
-      for (const sessionId of this.allowed) {
+      for (const sessionId of this.#targets()) {
         let wakes
         try {
           wakes = this.core.listUnreconciledWakesForSession(sessionId, { limit: 20 })

@@ -48,7 +48,7 @@ test('BACKUP1 consistent snapshot verifies and restores to an isolated database'
   seed(databasePath, 'first intent')
   const backup = createBackup({ databasePath })
   assert.equal(existsSync(backup.path), true)
-  assert.equal(backup.schemaVersion, '9')
+  assert.equal(backup.schemaVersion, '10')
   assert.equal(backup.counts.intents, 1)
   assert.match(backup.sha256, /^[0-9a-f]{64}$/)
   assert.equal(verifyBackup(backup.path).valid, true)
@@ -57,12 +57,12 @@ test('BACKUP1 consistent snapshot verifies and restores to an isolated database'
   const target = join(dir, 'restored.sqlite')
   const dry = restoreBackup({ backupPath: backup.path, databasePath: target, dryRun: true })
   assert.equal(dry.restored, false)
-  assert.equal(dry.schemaVersion, '9')
+  assert.equal(dry.schemaVersion, '10')
   assert.equal(existsSync(target), false, 'dry-run must not create or replace the target')
   const restored = restoreBackup({ backupPath: backup.path, databasePath: target })
   assert.equal(restored.restored, true)
   assert.deepEqual(intentDescriptions(target), ['first intent'])
-  assert.equal(inspectLifeDatabase(target).schemaVersion, '9')
+  assert.equal(inspectLifeDatabase(target).schemaVersion, '10')
 
   // The old target is preserved when restoring over an existing database.
   seed(target, 'second intent')
@@ -108,7 +108,7 @@ test('BACKUP4 validation is source-read-only and never creates or changes sideca
   const before = statSync(databasePath)
   const beforeHash = readFileSync(databasePath)
   const info = inspectLifeDatabase(databasePath)
-  assert.equal(info.schemaVersion, '9')
+  assert.equal(info.schemaVersion, '10')
   for (const suffix of ['-wal', '-shm', '-journal']) {
     assert.equal(existsSync(`${databasePath}${suffix}`), false, `inspection created ${suffix}`)
   }

@@ -1,5 +1,17 @@
 # Amadeus Life release notes
 
+## 1.1.0 — 2026-10-28
+
+Workspace-scoped Life scheduling and independent console.
+
+- Bind one official DSH Workspace through the GUI. Stable entity id and registry-validated `sessionIds` are the membership source; titles/paths are display-only. Current and late-joining Sessions are included on each resolution; outside/removed Sessions are denied.
+- One stable Workspace Persona and binding per member Session. Binding does not widen wake access; workspace-wide autonomous wake requires a separate explicit activation. Legacy 1.0 allowlists remain effective but are not silently expanded. Existing intents, activities, budget, and wake ledger are preserved; activation creates no new wake/delivery.
+- Per-Session modes: inherit, passive, independent, disabled. Passive never gets autonomous wake; disabled denies Life tool/context/wake and conservatively pauses/unknowns activities. Independent wake/token/activity limits are clamped below global budget and use the shared resource lock.
+- GUI adds a Workspace page for binding, explicit activation and session-rule editing; existing Settings entry/overview remains.
+- SQLite schema v10 adds workspace binding/activation markers and durable session rules. v2–v9 migrate additively; backup before upgrade and use the documented dry-run/atomic restore for rollback.
+- `externalMessageSessionIds` remains a separate default-empty prompt opt-in; no QQ send permission is granted. State is optional and absent-safe.
+- Validation: deterministic tests cover registry membership/late join/removal, legacy non-widening, stable Persona/restart, modes, independent/global limits, owner API, GUI/bundle registration, backup/restore, and prior v1 behavior. Real isolated DSH GUI acceptance remains Codex's step.
+
 ## 1.0.1 — 2026-10-27
 
 Patch release for the external-message wake guidance and provenance repair.

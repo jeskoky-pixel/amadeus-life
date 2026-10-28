@@ -1,5 +1,13 @@
 # amadeus-life 交接
 
+## v1.1.0 Workspace checkpoint（2026-10-28）
+
+- 版本 `1.1.0`；SQLite schema v10 增量加入 `life_workspace`、`session_rules`。绑定官方 DSH Workspace 的稳定实体 ID；成员授权只来自 `workspaceRegistry.get(id).sessionIds`（运行期每次重新读取），标题/路径仅展示。
+- 旧 1.0 allowlist 在绑定/升级后不会自动扩大；工作区自主唤醒需单独的显式确认。现有意图、活动、预算和 wake ledger 保留，不重放。会话模式 inherit/passive/independent/disabled 持久化；独立预算夹紧在全局上限内并共享全局资源锁。
+- GUI 新增第 8 个 **身份与工作区** 页：Workspace 选择/绑定、显式启用、会话规则编辑；八页标签为总览、自主唤醒、会话规则、意图管理、活动中心、预算与注意力、身份与工作区、数据与诊断。
+- 确定性测试 **209** 项通过（含 workspace 13）；`npm test`、`npm run build`、`npm run verify:package` 通过。候选包 `dist/amadeus-life-1.1.0.tgz` SHA-256 `9a1ea82a9a36fc1774ac647faf461fbd3130a1a4cf3c345d515e1aea1700c68e`，33 files。
+- 未 commit/push/publish/生产安装；隔离 Desktop 通过开发源码 link 加载，真实 GUI 与 Workspace Registry 已由 Codex 验收，详见 docs/verification/LIFE_V1_1_ACCEPTANCE_2026-10-28.md。报告见 `../life-v1.1-creator-report.private.md`（仓库外私有文件）。
+
 ## 最新状态（2026-10-26）
 
 Life 1.0.0 的主要实现和定点返工由原持续 DSH Creator 会话完成。Codex 独立 178/178 测试通过；用户版 README 更新后重建的候选包 `amadeus-life-1.0.0.tgz` SHA-256 为 `6b9ef52fa1b1dfafb80a2ac4d9fc5a70e8d7d23e0104b259b2d0b0e3167f2654`。全新隔离官方 DSH Desktop 对同一运行时代码通过七页设置、首次配置、本地合成意图与活动、GUI 参数保存/校验、备份恢复、硬重启以及停启/卸载重装与数据保留。公开证据见 `docs/verification/FINAL_DESKTOP_PRODUCTIZATION_2026-10-25.md`。原 PR #2 保持 OPEN；未合并、未公开发行、未部署生产、未连接真实平台或支付 Provider。

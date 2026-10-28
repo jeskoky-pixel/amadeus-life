@@ -2,11 +2,12 @@
 
 Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住待办意图，在合适的时间提醒 DSH 重新思考，并管理活动、注意力和自主运行预算。
 
-> 当前为 1.0.1 补丁版本；1.0.0 已通过 [PR #2](https://github.com/jeskoky-pixel/amadeus-life/pull/2) 合并。1.0.1 尚未公开发行、未部署到生产 DSH，也未连接真实外部活动 Provider。
+> 当前为 1.1.0 开发版本；1.0.0 已通过 [PR #2](https://github.com/jeskoky-pixel/amadeus-life/pull/2) 合并。1.1.0 尚未公开发行、未部署到生产 DSH，也未连接真实外部活动 Provider。
 
 ## 使用者可以做什么
 
-- 在 DSH 设置中打开 **Amadeus Life**，按首次配置向导选择本地活动等预设，并绑定允许使用的 Session。
+- 在 DSH 设置中打开 **Amadeus Life**，按首次配置向导选择预设，并在工作区页绑定官方 DSH Workspace。
+- 在 **工作区** 页选择官方 DSH Workspace；成员由 Workspace Registry 的可信 Session 归属决定，新成员自动纳入。绑定本身不扩大自主唤醒，需管理员显式启用；支持继承/仅被动/独立计划/完全停用四种会话规则。
 - 创建、查看、修改和取消未来意图；到期时由本地心跳与授权唤醒机制重新考虑，而不是直接对外发送消息。
 - 管理活动的启动、暂停、恢复、取消与状态；内置本地虚拟 Provider 可安全演示完整流程。真实外部动作需要另行接入可信 Provider。
 - 设定安静时段、注意力让位、活动并发、模型调用与成本预算；在运行状态页查看阻止或延迟的原因。
@@ -14,7 +15,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 
 日常设置使用 DSH 原生页面，不需要手动改数据库。安装、配置、升级及回滚步骤见 [用户指南](docs/USER_GUIDE.md) 与 [安装说明](docs/INSTALL.md)。Life 可单独安装；State 和 Memory 是可选协作插件。
 
-**验证状态：187/187 项确定性测试通过。1.0.0 已在独立 DSH Desktop 完成产品化验收；1.0.1 在隔离官方 DSH/QQ 环境完成受控外发唤醒验证（[公开报告](docs/verification/QQ_EXTERNAL_WAKE_2026-10-27.md)）：仅一次授权私有 Scene 的 `qq_send_message` 调用与一次 opt-in 关闭后的零发送对照，不代表普遍自主性或长期可靠性。生产部署、付款与生产平台发送未验收。**
+**验证状态：209/209 项确定性测试通过。1.0.0 已在独立 DSH Desktop 完成产品化验收；1.0.1 在隔离官方 DSH/QQ 环境完成受控外发唤醒验证（[公开报告](docs/verification/QQ_EXTERNAL_WAKE_2026-10-27.md)）：仅一次授权私有 Scene 的 `qq_send_message` 调用与一次 opt-in 关闭后的零发送对照，不代表普遍自主性或长期可靠性。生产部署、付款与生产平台发送未验收。**
 
 项目入口：[Amadeus-dsh](https://github.com/jeskoky-pixel/Amadeus-dsh)。开发顺序：P0。仓库已于 2026-10-25 根据用户要求公开，便于网页端审阅。
 
@@ -39,15 +40,15 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 - **单屏首次运行**：`scripts/life-setup.mjs` 生成 core/autonomous/activity 完整配置；autonomous/activity 含默认关闭的显式 `bootstrap`，首次加载创建一个稳定 Persona、每个 allowlist Session 一个 private Scene 与 binding，同配置重启幂等且不增 revision；已有不同 binding 时 fail closed，不覆盖历史。`--out` 只创建新文件。
 - **真实用量归账**：自主 turn 的官方 `assistant/message.data.usage` 按 Session+seq 幂等写入 `usage_events` 并累加到预算 token；无 usage 字段时健康显示 `usage_unknown`，保留保守预留，不宣称真实结算。
 - **到期复查**：注入时钟 + 有界 tick，每个意图 revision 原子产生一个本地 reconsideration 事件；重复 tick、重启与多连接不会重复领取。
-- **持久化**：`node:sqlite` + WAL + `BEGIN IMMEDIATE` + 唯一约束 + revision CAS；schema v9 为 v2–v8 的增量迁移；损坏或未知 schema 明确报错，绝不替换为空库。
+- **持久化**：`node:sqlite` + WAL + `BEGIN IMMEDIATE` + 唯一约束 + revision CAS；schema v10 为 v2–v9 的增量迁移；损坏或未知 schema 明确报错，绝不替换为空库。
 - **单运行时所有权**：适配器持有 SQLite lease；第二个仍在运行的适配器以明确健康状态失败关闭，不会执行启动恢复；只有持有者可释放；仅当记录的 PID 可证已死时才接管陈旧 lease。
 - **模块解耦**：运行时不 import 任何 QQ、Memory、State、Browser、Bilibili、Android、Games 或其他插件内部代码；源码 import 审计见测试 T10/T11。
 - **原生 DSH 设置页**：`dsh.client` 加载 `./client`，在 Settings 左侧注册 **Amadeus Life**；所有 24 个 Config 字段均为 volatile，满足 DSH `dsh-settings` 的表单投影/`whileServed` 契约；同时注册 `plugins.row.config` 配置页和 `plugins.detail.section` 基础配置卡。页面提供总览、首次配置向导（Core/Autonomous/Local Activity）、Session allowlist/binding 管理、意图、活动、预算与诊断。页面通过 owner-authenticated same-origin `/api/amadeus-life` 访问宿主，不直连 SQLite；配置保存/取消/恢复默认/冲突使用同一 Config Schema 与 Config Forms。字段为重启生效：保存后重启/重载插件才改变调度与工具，页面明确提示，不伪装即时生效。
-- **产品化交付**：版本 `1.0.1`；`npm run build` 生成 `lib/client.js`，`npm run package` 生成 `dist/amadeus-life-1.0.1.tgz`、SHA-256 与包元数据。安装、升级、备份/回滚见用户指南。
+- **产品化交付**：版本 `1.1.0`；`npm run build` 生成 `lib/client.js`，`npm run package` 生成 `dist/amadeus-life-1.1.0.tgz`、SHA-256 与包元数据。安装、升级、备份/回滚见用户指南。
 
 ## 安装
 
-本仓库不修改任何 DSH profile。由安装者使用 Plugin Manager / `plugin_manager` 安装**版本化 tarball** `dist/amadeus-life-1.0.1.tgz`（或本目录）；不要手写 profile 的 `package.json` / `cordis.patch.yml`。在已安装 1.0.0 的环境中，重装同一路径的旧包可能不会替换已安装版本；请使用新的 1.0.1 路径，安装后核对已安装版本与文件，再重启/重载插件。
+本仓库不修改任何 DSH profile。由安装者使用 Plugin Manager / `plugin_manager` 安装**版本化 tarball** `dist/amadeus-life-1.1.0.tgz`（或本目录）；不要手写 profile 的 `package.json` / `cordis.patch.yml`。在已安装 1.0.0 的环境中，重装同一路径的旧包可能不会替换已安装版本；请使用新的 1.1.0 路径，安装后核对已安装版本与文件，再重启/重载插件。
 
 - 包：`@amadeus/life`，`type: module`，无运行时依赖、无安装脚本。
 - Bundle patch：`cordis.patch.yml` 插入 `amadeus-life` 行。
@@ -111,7 +112,7 @@ npm test
 node test/life-v1.test.js
 ```
 
-当前结果：187 个确定性测试全部通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 36、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 6、productization 8、backup 7、privacy 2）。覆盖 v2→v9/v3→v9/v4→v9/v5→v9/v6→v9/v7→v9/v8→v9 迁移与回滚、Host 消费证据与重启对账、身份隔离/撤销、idle 资格与投递、预算边界与共享 Persona/global token 预留、虚拟 Provider 生命周期与崩溃、资源互斥、用户消息优先暂停、共享只读视图、活动并发、付费预留、Session 撤销隔离、Provider 权限、重绑禁止、wakeId 幂等、外发 opt-in 的持久化工具 intent provenance 与失败关闭、首次运行 bootstrap、Config Schema/Forms/客户端注册、表单保存/取消/冲突、重复注册幂等/卸载清理、owner-auth HTTP、admin intent/activity/attention 权限、SQLite 一致快照/原子恢复/预检回滚、包清单。十场景映射记录保留在仓库内，不随安装包分发。Creator 沙箱的 `node --test` 仍有 runner `spawn EPERM` 限制；`npm test` 与直接测试文件通过。
+当前结果：209 个确定性测试全部通过（quality-gaps 18、life-core 20、revision 9、wake-ledger 19、wake-host 37、wake-consumption 26、life-v1 15、v1-budget 9、final-hardening 8、setup-script 4、bootstrap 6、productization 12、backup 7、workspace 13、migration 4、privacy 2）。覆盖 v2→v10 的增量迁移与回滚、Workspace 可信成员/晚加入/撤权/旧 allowlist 不扩大、四种会话模式、独立预算与重启持久化、Host 消费证据与重启对账、身份隔离/撤销、idle 资格与投递、预算边界与共享 Persona/global token 预留、虚拟 Provider 生命周期与崩溃、资源互斥、用户消息优先暂停、共享只读视图、活动并发、付费预留、Session 撤销隔离、Provider 权限、重绑禁止、wakeId 幂等、外发 opt-in 的持久化工具 intent provenance 与失败关闭、首次运行 bootstrap、Config Schema/Forms/客户端注册、表单保存/取消/冲突、重复注册幂等/卸载清理、owner-auth HTTP、admin intent/activity/attention 权限、SQLite 一致快照/原子恢复/预检回滚、包清单。十场景映射记录保留在仓库内，不随安装包分发。Creator 沙箱的 `node --test` 仍有 runner `spawn EPERM` 限制；`npm test` 与直接测试文件通过。
 
 
 

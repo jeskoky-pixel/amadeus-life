@@ -1,12 +1,12 @@
-# 安装与配置（Amadeus Life 1.0.1）
+# 安装与配置（Amadeus Life 1.1.0）
 
 验证环境：官方 DSH Desktop 0.2.1-rc.3、Node 22.23.2；包声明 Node >=22.13.0，依赖 node:sqlite，无第三方运行依赖。只有上述 DSH 版本经过本轮集成验证。
 
-1.0.0 已在独立开发配置完成验收；1.0.1 的这些验证同样只在隔离开发配置进行，不修改生产 DSH。
+1.0.0 已在独立开发配置完成验收；1.1.0 的工作区绑定/会话规则已完成确定性测试，真实隔离 DSH GUI 已验收；正式发布和生产安装仍未执行；本仓库不修改生产 DSH。
 
 ## 安装
 
-先克隆本仓库。由管理员使用该**开发配置**的正式 Plugin Manager 安装版本化 tarball `dist/amadeus-life-1.0.1.tgz`（或克隆目录）。1.0.0 已安装的环境必须安装这个新的版本化包：在隔离 QA 中，重装同一插件路径下的更新 tarball 没有替换已安装的 1.0.0。安装后先核对已安装版本与文件，再重启/重载插件。后台接口的实际语义如下（为宿主 API，不是 shell 命令）：
+先克隆本仓库。由管理员使用该**开发配置**的正式 Plugin Manager 安装版本化 tarball `dist/amadeus-life-1.1.0.tgz`（或克隆目录）。1.0.0 已安装的环境必须安装这个新的版本化包：在隔离 QA 中，重装同一插件路径下的更新 tarball 没有替换已安装的 1.0.0。安装后先核对已安装版本与文件，再重启/重载插件。后台接口的实际语义如下（为宿主 API，不是 shell 命令）：
 
 ```js
 pluginManager.installBundle(absoluteTarballPath, { enabled: true })
@@ -17,7 +17,7 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
 
 以上操作均在隔离真实 Desktop 测试过。检查结果中的 application 和错误；pnpm exit 0 不等于激活成功。安装需要经过认证的管理员连接；普通 Workspace Write Agent 不因此获得配置管理或 Full Access。Desktop profile 由 Electron 管理，不要套用 CLI 修改生产 desktop profile。
 
-开发期可用本地 link 安装源码；发布验证必须使用版本化 tarball。更新源码后先运行 `npm run build && npm test && npm run package`，生成本次的 `dist/amadeus-life-1.0.1.tgz`、SHA-256 与包元数据，没有 npm release。再通过开发配置的管理器按其返回结果安装、核对版本/文件并重启。普通用户配置可直接用离线生成器：`node scripts/life-setup.mjs --preset core|autonomous|activity`（只输出 JSON，不改 profile）。
+开发期可用本地 link 安装源码；发布验证必须使用版本化 tarball。更新源码后先运行 `npm run build && npm test && npm run package`，生成本次的 `dist/amadeus-life-1.1.0.tgz`、SHA-256 与包元数据，没有 npm release。再通过开发配置的管理器按其返回结果安装、核对版本/文件并重启。普通用户配置可直接用离线生成器：`node scripts/life-setup.mjs --preset core|autonomous|activity`（只输出 JSON，不改 profile）。
 
 安装后在 DSH Desktop 左下角 **设置** 的左侧导航中打开 **Amadeus Life**。页面提供总览、首次配置、Session/权限、意图、活动、预算和高级/诊断；常用参数直接保存到与 Plugin Manager 相同的 Config，部分字段需要重启。完整操作见 [用户指南](USER_GUIDE.md)。升级/回滚和数据库备份见 [BACKUP](BACKUP.md) 与 [UPGRADE](UPGRADE.md)。
 
@@ -42,7 +42,7 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
 
 普通用户先看单屏 [SETUP](SETUP.md)：三种预设、Session allowlist 说明、首次 bootstrap、admin 自定义绑定与健康错误。`bootstrap` 默认关闭；它会在 Life 行启用时创建稳定默认 Persona、每 Session 一个 private Scene 与 binding，同配置重复加载幂等，已有不同 binding 时 fail closed。下面的完整配置只给需要精细控制的 Advanced 管理员。
 
-当前 schema v9。损坏、不兼容版本或缺少必要表会明确失败，不自动删除或换成空库。恢复前先备份，再人工检查；不要为消除报错盲删数据库。v2–v8 会按既有增量路径迁移；迁移前先冷备份 SQLite/WAL/SHM。
+当前 schema v10。损坏、不兼容版本或缺少必要表会明确失败，不自动删除或换成空库。恢复前先备份，再人工检查；不要为消除报错盲删数据库。v2–v9 会按既有增量路径迁移；迁移前先冷备份 SQLite/WAL/SHM。
 
 ## 公共服务与事件
 

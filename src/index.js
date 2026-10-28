@@ -22,6 +22,7 @@ import { Config } from './config-schema.js'
 import { isFlatConfig, normalizeLifeConfig, publicConfig } from './config.js'
 import { mountHttp } from './http.js'
 import { createBackup, listBackups } from './backup.js'
+import { WorkspacePolicy } from './workspace.js'
 import {
   LIFE_SCHEMA_VERSION,
   LifeError,
@@ -567,11 +568,24 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  let workspaceRegistry = optionalService(ctx, 'workspaceRegistry')
+  const workspacePolicy = new WorkspacePolicy({
+    store: core.store,
+    core,
+    v1: core.v1,
+    getRegistry: () => workspaceRegistry,
+    legacyAllowed: () => delivery.allowedSessionIds,
+    budgetConfig: () => budgetConfig,
+    logger: ctx.logger,
+  })
   const wakeHost = new WakeHost({
     core,
     ownerId,
     enabled: delivery.enabled,
     allowedSessionIds: delivery.allowedSessionIds,
+    getAllowedSessionIds: () => workspacePolicy.wakeTargets(),
+    getSessionQuietHours: (sessionId) => workspacePolicy.quietHoursFor(sessionId),
+    isSessionDeliverable: (sessionId) => workspacePolicy.isDeliverable(sessionId),
     externalMessageSessionIds: delivery.externalMessageSessionIds,
     intervalMs: delivery.intervalMs,
     maxPerDrive: delivery.maxPerDrive,
@@ -583,6 +597,7 @@ export function apply(ctx, config = {}) {
 
   /** @type {{dispose?: () => void} | (() => void) | null} */
   let injectionHandle = null
+
   const disposeInjection = () => {
     const handle = injectionHandle
     injectionHandle = null
@@ -647,6 +662,34 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  /** @type {{dispose?: () => void} | (() => void) | null} */
+  let workspaceInjectionHandle = null
+  let workspaceRegistryGeneration = 0
+  if (workspaceRegistry === undefined && typeof ctx.inject === 'function') {
+    try {
+      const handle = ctx.inject(['workspaceRegistry'], (scope) => {
+        const generation = ++workspaceRegistryGeneration
+        workspaceRegistry = scope?.workspaceRegistry
+        if (typeof scope?.effect === 'function') {
+          scope.effect(() => () => {
+            if (generation === workspaceRegistryGeneration) workspaceRegistry = undefined
+          })
+        }
+      })
+      workspaceInjectionHandle = () => {
+        workspaceRegistryGeneration += 1
+        workspaceRegistry = undefined
+        try {
+          if (typeof handle === 'function') handle()
+          else if (typeof handle?.dispose === 'function') handle.dispose()
+        } catch {
+          // Optional injection teardown is best-effort.
+        }
+      }
+    } catch {
+      // Workspace Registry remains unavailable; workspace operations fail closed.
+    }
+  }
   /** @param {Record<string, unknown>[]} events - produced reconsideration events. */
   const publish = (events) => {
     for (const event of events) ctx.emit('life/reconsideration', event)
@@ -660,6 +703,14 @@ export function apply(ctx, config = {}) {
     disposed = true
     wakeHost.stop()
     disposeInjection()
+    try {
+      if (typeof workspaceInjectionHandle === 'function') workspaceInjectionHandle()
+      else if (typeof workspaceInjectionHandle?.dispose === 'function') workspaceInjectionHandle.dispose()
+    } catch {
+      // Optional injection teardown is best-effort.
+    }
+    workspaceInjectionHandle = null
+    workspaceRegistry = undefined
     if (timer !== null) {
       clearInterval(timer)
       timer = null
@@ -742,7 +793,13 @@ export function apply(ctx, config = {}) {
     getSharedLifeView: (options) => core.v1.getSharedLifeView(options),
     recordSessionUsage: (options) => core.v1.recordSessionUsage(options),
     driveDueWakesOnce: () => wakeHost.driveOnce(),
-    getHealth: () => ({ ...core.getHealth(), delivery: wakeHost.health(), setup }),
+    getWorkspaceView: () => workspacePolicy.view(),
+    listWorkspaces: () => workspacePolicy.listWorkspaces(),
+    bindWorkspace: (input) => workspacePolicy.bind(input),
+    activateWorkspace: (input) => workspacePolicy.activate(input),
+    setSessionRule: (input) => workspacePolicy.setRule(input),
+    getSessionRule: (sessionId) => workspacePolicy.resolve(sessionId),
+    getHealth: () => ({ ...core.getHealth(), delivery: wakeHost.health(), setup, workspace: workspacePolicy.health() }),
     getScopedHealth: (options) => core.getScopedHealth(options),
     close: () => dispose(),
   }
@@ -750,6 +807,12 @@ export function apply(ctx, config = {}) {
   // Cleanup is registered before the service and tools are published so a
   // setup failure cannot leak the lease, timer, or SQLite handle. Public
   // `api.close()` and Host disposal share this exact idempotent path.
+  const guardedToolBody = (handler) => toolBody(async (args, exec) => {
+    const target = sessionScope(exec).slice(SCOPE_PREFIX.length)
+    workspacePolicy.assertTool(target)
+    return handler(args, exec)
+  })
+
   ctx.effect(() => dispose)
 
   mountHttp(ctx, {
@@ -762,12 +825,27 @@ export function apply(ctx, config = {}) {
     listWakes: (options) => core.v1.adminListWakes(options),
     listBudgets: () => core.v1.adminListBudgets(),
     cancelIntent: (id, expectedRevision) => core.v1.adminCancelIntent(id, expectedRevision),
+    updateIntent: (id, options) => core.v1.adminUpdateIntent(id, options),
     activityAction: (action, id) => core.v1.adminActivityAction(action, id),
-    createIntent: (options) => core.v1.adminCreateIntent(options),
-    startActivity: (options) => core.v1.adminStartActivity(options),
-    yieldActivities: (options) => core.v1.adminYieldActivities(options),
+    createIntent: (options) => {
+      workspacePolicy.assertTool(options?.targetSessionId)
+      return core.v1.adminCreateIntent(options)
+    },
+    startActivity: (options) => {
+      workspacePolicy.assertActivityStart(options?.targetSessionId)
+      return core.v1.adminStartActivity(options)
+    },
+    yieldActivities: (options) => {
+      workspacePolicy.assertTool(options?.targetSessionId)
+      return core.v1.adminYieldActivities(options)
+    },
     createBackup: () => createBackup({ databasePath }),
     listBackups: () => listBackups(join(dirname(databasePath), 'backups')),
+    getWorkspace: () => workspacePolicy.view(),
+    listWorkspaces: () => workspacePolicy.listWorkspaces(),
+    bindWorkspace: (input) => workspacePolicy.bind(input),
+    activateWorkspace: (input) => workspacePolicy.activate(input),
+    setSessionRule: (input) => workspacePolicy.setRuleAsync(input),
     bootstrap: (options) => core.v1.adminBootstrap(options),
     revokeBinding: (options) => core.v1.adminRevokeBinding(options),
   })
@@ -789,7 +867,7 @@ export function apply(ctx, config = {}) {
       },
       required: ['description', 'reviewAt'],
     },
-    execute: toolBody((args, exec) => {
+    execute: guardedToolBody((args, exec) => {
       const scope = sessionScope(exec)
       return core.createIntent({
         description: args.description,
@@ -810,7 +888,7 @@ export function apply(ctx, config = {}) {
       properties: { id: { type: 'string', description: 'Intent id.' } },
       required: ['id'],
     },
-    execute: toolBody((args, exec) => core.getIntent(args.id, { scope: sessionScope(exec) })),
+    execute: guardedToolBody((args, exec) => core.getIntent(args.id, { scope: sessionScope(exec) })),
   })
 
   registerTool(ctx, {
@@ -824,7 +902,7 @@ export function apply(ctx, config = {}) {
       },
       required: [],
     },
-    execute: toolBody((args, exec) => ({
+    execute: guardedToolBody((args, exec) => ({
       intents: core.listIntents({ scope: sessionScope(exec), status: args.status }),
     })),
   })
@@ -845,7 +923,7 @@ export function apply(ctx, config = {}) {
       },
       required: ['id', 'expectedRevision'],
     },
-    execute: toolBody((args, exec) => {
+    execute: guardedToolBody((args, exec) => {
       // Explicit allowlist: never spread model args over authorization fields.
       const patch = {}
       if (args.description !== undefined) patch.description = args.description
@@ -871,7 +949,7 @@ export function apply(ctx, config = {}) {
       },
       required: ['id', 'expectedRevision'],
     },
-    execute: toolBody((args, exec) =>
+    execute: guardedToolBody((args, exec) =>
       core.cancelIntent(args.id, { scope: sessionScope(exec), expectedRevision: args.expectedRevision }),
     ),
   })
@@ -889,7 +967,7 @@ export function apply(ctx, config = {}) {
       },
       required: ['description'],
     },
-    execute: toolBody((args, exec) =>
+    execute: guardedToolBody((args, exec) =>
       core.recordActivity({
         description: args.description,
         intentId: args.intentId,
@@ -908,7 +986,7 @@ export function apply(ctx, config = {}) {
       properties: { id: { type: 'string', description: 'Activity id.' } },
       required: ['id'],
     },
-    execute: toolBody((args, exec) => core.getActivity(args.id, { scope: sessionScope(exec) })),
+    execute: guardedToolBody((args, exec) => core.getActivity(args.id, { scope: sessionScope(exec) })),
   })
 
   registerTool(ctx, {
@@ -935,7 +1013,7 @@ export function apply(ctx, config = {}) {
       },
       required: ['id', 'expectedRevision', 'to'],
     },
-    execute: toolBody((args, exec) =>
+    execute: guardedToolBody((args, exec) =>
       core.transitionActivity(args.id, {
         scope: sessionScope(exec),
         expectedRevision: args.expectedRevision,
@@ -974,8 +1052,9 @@ export function apply(ctx, config = {}) {
         },
         required: ['description'],
       },
-      execute: toolBody(async (args, exec) => {
-        const { scope, binding } = boundIdentity(exec)
+      execute: guardedToolBody(async (args, exec) => {
+        const { scope, target, binding } = boundIdentity(exec)
+        workspacePolicy.assertActivityStart(target)
         return core.v1.startActivity({
           description: args.description,
           ownerScope: scope,
@@ -999,7 +1078,7 @@ export function apply(ctx, config = {}) {
         properties: { id: { type: 'string', description: 'Activity id.' } },
         required: ['id'],
       },
-      execute: toolBody(async (args, exec) => {
+      execute: guardedToolBody(async (args, exec) => {
         const { scope } = boundIdentity(exec)
         return core.v1.getActivityStatus(args.id, scope)
       }),
@@ -1019,7 +1098,7 @@ export function apply(ctx, config = {}) {
           properties: { id: { type: 'string', description: 'Activity id.' } },
           required: ['id'],
         },
-        execute: toolBody(async (args, exec) => {
+        execute: guardedToolBody(async (args, exec) => {
           const { scope } = boundIdentity(exec)
           return core.v1.operateActivity(action, args.id, scope)
         }),
@@ -1039,7 +1118,7 @@ export function apply(ctx, config = {}) {
         },
         required: ['id', 'outcome'],
       },
-      execute: toolBody(async (args, exec) => {
+      execute: guardedToolBody(async (args, exec) => {
         const { scope } = boundIdentity(exec)
         return core.v1.finishActivity(args.id, scope, args.outcome)
       }),
@@ -1052,7 +1131,7 @@ export function apply(ctx, config = {}) {
       description:
         'Read the minimal shared life view visible to this Session binding. Scenes are selected by the stored binding and explicit grants only; private descriptions and authorization/principal references are never returned.',
       parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
-      execute: toolBody((_args, exec) => {
+      execute: guardedToolBody((_args, exec) => {
         const { target } = boundIdentity(exec)
         return core.v1.getSharedLifeView({ targetSessionId: target })
       }),
@@ -1063,7 +1142,7 @@ export function apply(ctx, config = {}) {
     name: 'life_health',
     description: 'Report Life storage/tick health and intent, activity, and outbox counts.',
     parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
-    execute: toolBody((_args, exec) => core.getScopedHealth({ scope: sessionScope(exec) })),
+    execute: guardedToolBody((_args, exec) => core.getScopedHealth({ scope: sessionScope(exec) })),
   })
 
     if (tickIntervalMs > 0) {

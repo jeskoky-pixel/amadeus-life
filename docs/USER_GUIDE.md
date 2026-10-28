@@ -1,11 +1,11 @@
-# Amadeus Life 1.0.1 — User Guide
+# Amadeus Life 1.1.0 — User Guide
 
 Amadeus Life is a DSH Desktop plugin for durable intents, activities, optional autonomous wake/idle, budgets, and diagnostics. It does **not** send platform messages, run a second Agent, or perform payments.
 
 ## Install and open
 
-1. In DSH Plugin Manager, choose **Add plugin**, enter/paste the local versioned tarball path `dist/amadeus-life-1.0.1.tgz`, install, and enable the resulting **Amadeus Life** row. Use a distinct versioned artifact: reinstalling an updated tarball at the same installed path may not replace an earlier version. Do not hand-edit a production profile.
-2. Verify Plugin Manager reports version 1.0.1 and the expected files, then restart/reload the plugin. A Host 200 alone is not enough; verify the page and console.
+1. In DSH Plugin Manager, choose **Add plugin**, enter/paste the local versioned tarball path `dist/amadeus-life-1.1.0.tgz`, install, and enable the resulting **Amadeus Life** row. Use a distinct versioned artifact: reinstalling an updated tarball at the same installed path may not replace an earlier version. Do not hand-edit a production profile.
+2. Verify Plugin Manager reports version 1.1.0 and the expected files, then restart/reload the plugin. A Host 200 alone is not enough; verify the page and console.
 3. Open **DSH Settings**. The left navigation contains **Amadeus Life / Amadeus 生活**. The label follows the browser UI language (Chinese is preferred when available).
 4. The page works while the plugin is active; if the Host settings API is unavailable, it shows a clear disconnected/error state instead of pretending data exists.
 
@@ -24,6 +24,21 @@ Paste valid DSH Session ids (one per line or comma separated), apply the preset 
 Bootstrap creates one stable Persona, one **private** Scene per allowlisted Session, and one binding per Session. Reapplying the same config does nothing and does not increase binding revisions. If a Session already has a different Persona/Scene, setup fails closed and the page shows the conflict; Life never overwrites history. Use the existing binding or a new Session.
 
 All authoritative fields are volatile Config forms so DSH serves the `amadeus-life` Settings namespace and Plugin Manager config surface. The Host runtime reads those references, but wake/idle/budget/tool construction is restart-scoped: after saving, restart/reload the plugin before expecting runtime behavior to change. The page and basic config card state this explicitly; they never display pre-restart behavior as already applied.
+
+## Workspace and session rules
+
+Open **Workspace** to bind one official DSH Workspace. The Workspace Registry's stable entity id and current `sessionIds` are the only membership authority; title/path are display only. Binding creates one stable Persona and bindings but does **not** activate workspace-wide autonomous wake. Enabling workspace wake is a separate explicit confirmation; legacy 1.0 allowlists remain unchanged until that step. New Sessions in the bound Workspace inherit the default **inherit** rule automatically.
+
+Per-Session rules:
+
+- **Inherit workspace** — normal Life scheduling and wake eligibility.
+- **Passive only** — no autonomous wake; local management/context may remain, but autonomous activity starts are blocked.
+- **Independent plan** — own wake/token/activity limits and optional quiet start/end hours (0–23), clamped below the global budget and sharing the global resource lock.
+- **Disabled** — no Life tools/context/wake; running/paused activities are conservatively paused or marked unknown, never completed or deleted.
+
+Archived Workspace Sessions are excluded from wake and Life model operations even if the registry still reports them in its ownership account.
+
+Outside-Workspace Sessions cannot be assigned. Removing a Session from the Workspace revokes eligibility on the next resolution; existing intent/activity history remains auditable. `externalMessageSessionIds` remains a separate, default-empty prompt opt-in and never grants QQ send permission.
 
 ## Pages
 
@@ -52,7 +67,7 @@ All authoritative fields are volatile Config forms so DSH serves the `amadeus-li
 
 ## Backup, upgrade, rollback
 
-Back up the database (and any `-wal`/`-shm` files) before upgrading. Use the GUI **Back up now** button for a consistent snapshot, or the CLI commands in [BACKUP](BACKUP.md). v2–v8 databases are migrated incrementally to v9; no database is reset or replaced. Roll back by reinstalling the prior package and restoring the backed-up database with the documented dry-run/atomic restore flow. See [BACKUP](BACKUP.md) and [UPGRADE](UPGRADE.md).
+Back up the database (and any `-wal`/`-shm` files) before upgrading. Use the GUI **Back up now** button for a consistent snapshot, or the CLI commands in [BACKUP](BACKUP.md). v2–v9 databases are migrated incrementally to v9; no database is reset or replaced. Roll back by reinstalling the prior package and restoring the backed-up database with the documented dry-run/atomic restore flow. See [BACKUP](BACKUP.md) and [UPGRADE](UPGRADE.md).
 
 ## Boundaries
 
@@ -62,4 +77,4 @@ Back up the database (and any `-wal`/`-shm` files) before upgrading. Use the GUI
 - The settings API is owner-authenticated and same-origin; browser code never opens SQLite.
 - The GUI can request cancellation only; terminal Provider state requires trusted Provider evidence.
 
-Version 1.0.1 · schema v9 · DSH Desktop 0.2.1-rc.2 or newer.
+Version 1.1.0 · schema v10 · DSH Desktop 0.2.1-rc.2 or newer.

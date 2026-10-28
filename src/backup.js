@@ -28,6 +28,34 @@ import { pathToFileURL } from 'node:url'
 import { LIFE_SCHEMA_VERSION } from './model.js'
 import { LIFE_REQUIRED_TABLES } from './store.js'
 
+// These are the source schemas accepted by LifeStore's incremental migration.
+// Backups of those versions must remain restorable without opening LifeStore,
+// which would migrate the snapshot rather than preserve it for rollback.
+const V2_TABLES = ['meta', 'intents', 'intent_events', 'activities', 'runtime_leases']
+const V3_TABLES = [...V2_TABLES, 'wake_requests']
+const V4_TABLES = [...V3_TABLES, 'wake_consumption']
+const V6_TABLES = [...V4_TABLES, 'personas', 'scenes', 'scene_shares', 'session_bindings', 'budget_scopes', 'idle_state']
+const V7_TABLES = [...V6_TABLES, 'usage_events']
+const V8_TABLES = [...V7_TABLES, 'cost_reservations']
+const V9_TABLES = [...V8_TABLES, 'token_reservations', 'token_reservation_scopes']
+const TABLES_BY_VERSION = {
+  '2': V2_TABLES, '3': V3_TABLES, '4': V4_TABLES, '5': V4_TABLES,
+  '6': V6_TABLES, '7': V7_TABLES, '8': V8_TABLES, '9': V9_TABLES,
+  [LIFE_SCHEMA_VERSION]: LIFE_REQUIRED_TABLES,
+}
+const REQUIRED_COLUMNS = {
+  meta: ['key', 'value'],
+  intents: ['id', 'revision', 'status', 'description', 'context_scope', 'authorization_ref', 'review_at'],
+  activities: ['id', 'revision', 'status', 'owner_scope'],
+  wake_requests: ['id', 'event_id', 'target_session_id', 'status'],
+  session_bindings: ['target_session_id', 'persona_id', 'scene_id', 'active'],
+  budget_scopes: ['scope', 'wake_limit', 'token_limit', 'revision'],
+  token_reservations: ['id', 'session_scope', 'status'],
+  token_reservation_scopes: ['reservation_id', 'scope', 'status'],
+  life_workspace: ['singleton', 'workspace_id', 'persona_id', 'activated'],
+  session_rules: ['target_session_id', 'workspace_id', 'mode'],
+}
+
 function requireFile(path, label) {
   if (typeof path !== 'string' || path.length === 0) throw new Error(`${label} path is required`)
   if (!existsSync(path)) throw new Error(`${label} does not exist: ${path}`)
@@ -64,22 +92,37 @@ export function inspectLifeDatabase(path) {
         throw new Error(`SQLite integrity check failed: ${JSON.stringify(integrity).slice(0, 300)}`)
       }
       const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name))
-      for (const table of LIFE_REQUIRED_TABLES) {
-        if (!tables.has(table)) throw new Error(`Life database is missing required table: ${table}`)
-      }
+      if (!tables.has('meta')) throw new Error('Life database is missing required table: meta')
       const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
       if (version === undefined) throw new Error('Life database has no schema_version')
-      if (String(version.value) !== LIFE_SCHEMA_VERSION) {
-        throw new Error(`unsupported Life schema version ${String(version.value)}; expected ${LIFE_SCHEMA_VERSION}`)
+      const schemaVersion = String(version.value)
+      const requiredTables = TABLES_BY_VERSION[schemaVersion]
+      if (requiredTables === undefined) {
+        throw new Error(`unsupported Life schema version ${schemaVersion}; supported: 2–${LIFE_SCHEMA_VERSION}`)
+      }
+      for (const table of requiredTables) {
+        if (!tables.has(table)) throw new Error(`Life database is missing required table: ${table}`)
+      }
+      const futureTable = LIFE_REQUIRED_TABLES.find((table) => !requiredTables.includes(table) && tables.has(table))
+      if (futureTable !== undefined) {
+        throw new Error(`Life schema ${schemaVersion} contains partial future schema table: ${futureTable}`)
+      }
+      for (const [table, columns] of Object.entries(REQUIRED_COLUMNS)) {
+        if (!requiredTables.includes(table)) continue
+        const actual = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name))
+        for (const column of columns) {
+          if (!actual.has(column)) throw new Error(`Life database is missing required column: ${table}.${column}`)
+        }
       }
       const counts = {}
       for (const table of ['intents', 'activities', 'wake_requests', 'session_bindings', 'budget_scopes']) {
+        if (!tables.has(table)) continue
         counts[table] = Number(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n)
       }
       return {
         bytes: stat.size,
         sha256: hashFile(path),
-        schemaVersion: String(version.value),
+        schemaVersion,
         tables: [...tables].length,
         counts,
       }
@@ -188,7 +231,7 @@ export function verifyBackup(path) {
 export function listBackups(backupDir, limit = 50) {
   if (typeof backupDir !== 'string' || !existsSync(backupDir)) return []
   const files = readdirSync(backupDir)
-    .filter((name) => /^life-backup-.*\.sqlite$/.test(name))
+    .filter((name) => /^life-(?:backup|pre-v[2-9])-.*\.sqlite$/.test(name))
     .map((name) => join(backupDir, name))
     .sort()
     .reverse()

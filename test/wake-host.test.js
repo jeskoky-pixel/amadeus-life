@@ -282,7 +282,7 @@ function intentWake(overrides = {}) {
  * Drive deliver() with a fake trusted core so the prompt can be inspected
  * without a real Host. Only the persisted intent and the wake row vary.
  */
-function directWakeHost({ intent, allowedSessionIds = [SESSION_A], externalMessageSessionIds = [SESSION_A] }) {
+function directWakeHost({ intent, allowedSessionIds = [SESSION_A], externalMessageSessionIds = [SESSION_A], isSessionDeliverable, gate = null }) {
   const followups = []
   const intentCalls = []
   const core = {
@@ -301,18 +301,22 @@ function directWakeHost({ intent, allowedSessionIds = [SESSION_A], externalMessa
     enabled: true,
     allowedSessionIds,
     externalMessageSessionIds,
+    isSessionDeliverable,
     intervalMs: 60_000,
     maxPerDrive: 1,
   })
   host.bound = true
   host.bindingGeneration = 7
   host.sessionController = {
-    resolveAgent: async (sessionId) => ({
-      agent: {
-        session: { id: sessionId },
-        followup(message) { followups.push(message) },
-      },
-    }),
+    resolveAgent: async (sessionId) => {
+      if (gate !== null) await gate.promise
+      return {
+        agent: {
+          session: { id: sessionId },
+          followup(message) { followups.push(message) },
+        },
+      }
+    },
   }
   host.flushSession = async () => true
   // Keep this slice focused on prompt construction; reconciliation is covered
@@ -1090,6 +1094,7 @@ test('H16 delayed optional injection binds, withdraws, and rebinds without dupli
   })
   const life = host.provided.get('life')
   assert.deepEqual(injections[0].names, ['sessionController', 'sessions'])
+  assert.deepEqual(injections[1].names, ['workspaceRegistry'])
   assert.equal(life.getHealth().delivery.state, 'degraded')
   assert.equal(life.getHealth().delivery.reason, 'awaiting_services')
   seedDue(life, clock)
@@ -1125,7 +1130,7 @@ test('H16 delayed optional injection binds, withdraws, and rebinds without dupli
 
   host.disposers.forEach((dispose) => dispose())
   assert.equal(host.listeners.filter((listener) => listener.name === 'session/event').length, 0)
-  assert.equal(injectionDisposals, 2)
+  assert.equal(injectionDisposals, 3)
 })
 
 test('H15 optional Cordis injection exposes Host services absent from plain ctx.get', async () => {
@@ -1192,6 +1197,22 @@ test('H18 withdrawing Host services during flush never records admission or exec
   assert.ok(['uncertain', 'claimed'].includes(wake.status))
   assert.equal(life.getHealth().delivery.state, 'degraded')
   host.disposers.forEach((dispose) => dispose())
+})
+
+test('H25 revoked workspace membership after async resolve never queues a followup', async () => {
+  const gate = deferred()
+  let eligible = true
+  const delivery = directWakeHost({
+    intent: persistedIntent(),
+    gate,
+    isSessionDeliverable: () => eligible,
+  })
+  const pending = delivery.host.deliver(intentWake(), delivery.host.bindingGeneration)
+  eligible = false
+  gate.resolve()
+  const outcome = await pending
+  assert.equal(outcome.status, 'uncertain')
+  assert.equal(delivery.followups.length, 0)
 })
 
 test('H19 rebinding during resolve prevents the old Agent from delivering', async () => {

@@ -1106,6 +1106,16 @@ export class LifeV1 {
     return this.core.cancelIntent(row.id, { scope: row.context_scope, expectedRevision })
   }
 
+  /** Owner edit derives the stored scope; caller-supplied Session text is never an authority. */
+  adminUpdateIntent(intentId, { expectedRevision, description, reviewAt } = {}) {
+    const row = this.store.get('SELECT id, context_scope FROM intents WHERE id = ?', requireString(intentId, 'intentId', 200))
+    if (row === undefined) throw new LifeNotFoundError('intent was not found', { intentId })
+    const patch = {}
+    if (description !== undefined) patch.description = description
+    if (reviewAt !== undefined) patch.reviewAt = reviewAt
+    return this.core.updateIntent(row.id, { scope: row.context_scope, expectedRevision, ...patch })
+  }
+
   /**
    * @param {'pause'|'resume'|'cancel'} action @param {string} activityId
    * @returns {Promise<Record<string, unknown>>} updated activity.

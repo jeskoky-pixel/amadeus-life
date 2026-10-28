@@ -180,9 +180,6 @@ export function validateAll(values, fields) {
   if (input.idleEnabled === true && !allowed.includes(target) && errors.idleTargetSessionId === undefined) {
     errors.idleTargetSessionId = 'idleTargetNotAllowed';
   }
-  if (input.wakeDeliveryEnabled === true && allowed.length === 0 && errors.allowedSessionIds === undefined) {
-    errors.allowedSessionIds = 'allowlistRequired';
-  }
   if (input.bootstrapEnabled === true && allowed.length === 0 && errors.bootstrapEnabled === undefined) {
     errors.bootstrapEnabled = 'bootstrapNeedsSessions';
   }

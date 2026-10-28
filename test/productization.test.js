@@ -92,16 +92,102 @@ test('PROD1 Config schema and flat normalization are authoritative and validated
   assert.ok(Config['~standard'].validate({ ...CONFIG_DEFAULTS, maxPerDrive: 99 }).issues?.length > 0)
 })
 
+test('PROD9 wake can be enabled before a legacy allowlist when a workspace will supply members', () => {
+  const errors = validateAll({ ...CONFIG_DEFAULTS, wakeDeliveryEnabled: true, allowedSessionIds: [] }, CONFIG_FIELDS)
+  assert.equal(errors.wakeDeliveryEnabled, undefined)
+  assert.equal(errors.allowedSessionIds, undefined)
+  const normalized = normalizeLifeConfig({ ...CONFIG_DEFAULTS, wakeDeliveryEnabled: true, allowedSessionIds: [] })
+  assert.equal(normalized.wakeDelivery.enabled, true)
+  assert.deepEqual(normalized.wakeDelivery.allowedSessionIds, [])
+  assert.deepEqual(normalized.wakeDelivery.externalMessageSessionIds, [])
+})
+
+test('PROD10 stylesheet is injected once into document.head and no nested style is rendered', () => {
+  const bundle = readFileSync(join(process.cwd(), 'lib', 'client.js'), 'utf8')
+  const elements = new Map()
+  const document = {
+    head: { children: [], appendChild(node) { this.children.push(node); elements.set(node.id, node) } },
+    createElement(tag) {
+      return {
+        tagName: tag.toUpperCase(), id: '', textContent: '', attrs: {},
+        setAttribute(name, value) { this.attrs[name] = value },
+      }
+    },
+    getElementById(id) { return elements.get(id) || null },
+  }
+  let loaded
+  vm.runInNewContext(bundle, {
+    window: { __ModuleLoader__: { load(definition) { loaded = definition } } },
+    document,
+    console,
+  })
+  const React = { createElement: () => null }
+  loaded.factory((name) => (name === 'react' ? React : {}))
+  loaded.factory((name) => (name === 'react' ? React : {}))
+  assert.equal(document.head.children.length, 1)
+  const style = document.head.children[0]
+  assert.equal(style.id, 'amadeus-life-plugin-styles')
+  assert.equal(style.attrs['data-plugin-css'], 'amadeus-life')
+  assert.match(style.textContent, /--aml-accent/)
+  assert.doesNotMatch(bundle, /h\('style', null, CSS\)/)
+})
+
+test('PROD11 module evaluated without document injects once when a live component renders', () => {
+  const bundle = readFileSync(join(process.cwd(), 'lib', 'client.js'), 'utf8')
+  const context = {
+    window: { __ModuleLoader__: { load(definition) { context.loaded = definition } } },
+    navigator: { language: 'en-US' },
+    console,
+  }
+  vm.runInNewContext(bundle, context)
+  assert.ok(context.loaded)
+  const React = {
+    createElement(type, props, ...children) {
+      return { type, props: { ...(props || {}), children: children.length === 1 ? children[0] : children } }
+    },
+    useState(initial) { return [initial, () => {}] },
+    useCallback(callback) { return callback },
+    useRef(value) { return { current: value } },
+    useEffect() {},
+  }
+  const plugin = context.loaded.factory((name) => (name === 'react' ? React : {}))
+  const sections = []
+  const ctx = {
+    slots: {
+      inject(_name, callback) { callback() },
+      register(definition, component) { sections.push({ definition, component }); return () => {} },
+    },
+    configForms: { whileServed(_namespaces, callback) { callback(); return () => {} } },
+    effect(callback) { callback(); return () => {} },
+  }
+  plugin.apply(ctx)
+  const elements = new Map()
+  context.document = {
+    head: { children: [], appendChild(node) { this.children.push(node); elements.set(node.id, node) } },
+    createElement(tag) {
+      return { tagName: tag.toUpperCase(), id: '', textContent: '', attrs: {}, setAttribute(name, value) { this.attrs[name] = value } }
+    },
+    getElementById(id) { return elements.get(id) || null },
+  }
+  const section = sections.find((entry) => entry.definition.name === 'settings.section')
+  assert.ok(section)
+  const element = section.component()
+  element.type(element.props)
+  assert.equal(context.document.head.children.length, 1)
+  assert.equal(context.document.head.children[0].id, 'amadeus-life-plugin-styles')
+  assert.match(context.document.head.children[0].textContent, /--aml-accent/)
+})
+
 test('PROD2 built client is a compilable lazy module registering the native settings section', () => {
   const bundlePath = join(process.cwd(), 'lib', 'client.js')
   assert.equal(existsSync(bundlePath), true, 'run npm run build first')
   const bundle = readFileSync(bundlePath, 'utf8')
   for (const marker of ['settings.section', 'plugins.detail.section', 'plugins.row.config', 'configForms', 'amadeus-life', 'Amadeus Life',
     'intents/create', 'activities/start', 'attention/yield', '/backups', 'createBackup',
-    'externalMessageSessionIds', 'QQ Scene']) {
+    'externalMessageSessionIds', 'QQ Scene', '/workspace', 'bindWorkspace', 'activateWorkspace', 'saveRule']) {
     assert.match(bundle, new RegExp(marker.replace('.', '\\.')))
   }
-  for (const tab of ['overview', 'setup', 'sessions', 'intents', 'activities', 'budget', 'advanced']) {
+  for (const tab of ['overview', 'setup', 'sessions', 'intents', 'activities', 'budget', 'workspace', 'advanced']) {
     assert.match(bundle, new RegExp(`'${tab}'`))
   }
   assert.doesNotMatch(bundle, /^\s*import\s/m)
@@ -146,12 +232,13 @@ test('PROD2 built client is a compilable lazy module registering the native sett
 })
 
 test('PROD3 admin API requires same-origin owner and exposes only bounded Life views', async () => {
+  let cancelledRevision
   assert.equal(sameOrigin({ headers: { host: '127.0.0.1:1', origin: 'http://127.0.0.1:1' } }), true)
   assert.equal(sameOrigin({ headers: { host: '127.0.0.1:1', origin: 'http://evil.test' } }), false)
   assert.equal(sameOrigin({ headers: { host: '127.0.0.1:1', 'sec-fetch-site': 'cross-site' } }), false)
   const controller = {
     connection: { admit: () => ({ peer: { principal: { kind: 'owner' } } }) },
-    getHealth: () => ({ schemaVersion: '9', state: 'ok' }),
+    getHealth: () => ({ schemaVersion: '10', state: 'ok' }),
     getSetup: () => ({ state: 'ready' }),
     getConfig: () => ({ wakeDeliveryEnabled: false }),
     listBindings: () => [{ targetSessionId: A, active: true }],
@@ -159,13 +246,19 @@ test('PROD3 admin API requires same-origin owner and exposes only bounded Life v
     listActivities: () => ({ total: 0, items: [] }),
     listWakes: () => [],
     listBudgets: () => [],
-    cancelIntent: () => ({}),
+    cancelIntent: (id, revision) => { cancelledRevision = revision; return { id, status: 'cancelled' } },
+    updateIntent: (id, options) => ({ id, description: options.description, reviewAt: options.reviewAt }),
     activityAction: async () => ({}),
     createIntent: (input) => ({ description: input.description, targetSessionId: input.targetSessionId }),
     startActivity: async (input) => ({ description: input.description, status: 'running' }),
     yieldActivities: async () => ([{ outcome: 'already_paused' }]),
     createBackup: () => ({ fileName: 'life-backup-test.sqlite', bytes: 1, sha256: 'a'.repeat(64) }),
     listBackups: () => [],
+    getWorkspace: () => ({ binding: { workspaceId: 'ws_life', activated: true }, sessions: [] }),
+    listWorkspaces: () => [{ id: 'ws_life', title: 'Life Workspace', sessionIds: [A] }],
+    bindWorkspace: (input) => ({ workspaceId: input.workspaceId, activated: false }),
+    activateWorkspace: () => ({ workspaceId: 'ws_life', activated: true }),
+    setSessionRule: (input) => ({ sessionId: input.sessionId, mode: input.mode }),
     bootstrap: (input) => ({ state: 'ready', targets: input.targetSessionIds }),
     revokeBinding: () => ({}),
   }
@@ -185,7 +278,7 @@ test('PROD3 admin API requires same-origin owner and exposes only bounded Life v
   const res = response()
   await owner(getReq, res)
   assert.equal(res.status, 200)
-  assert.equal(JSON.parse(res.body).health.schemaVersion, '9')
+  assert.equal(JSON.parse(res.body).health.schemaVersion, '10')
   assert.equal(JSON.parse(res.body).config.wakeDeliveryEnabled, false)
 
   const boundedRes = response()
@@ -220,6 +313,15 @@ test('PROD3 admin API requires same-origin owner and exposes only bounded Life v
   await owner(makePost('/intents/create', { targetSessionId: A, description: 'review this', reviewAt: '2099-01-01T00:00:00.000Z' }), intentRes)
   assert.equal(intentRes.status, 200)
   assert.equal(JSON.parse(intentRes.body).intent.description, 'review this')
+  const updateRes = response()
+  await owner(makePost('/intents/update', { id: 'intent-1', targetSessionId: A, expectedRevision: 1, description: 'edited', reviewAt: '2099-01-02T00:00:00.000Z' }), updateRes)
+  assert.equal(updateRes.status, 200)
+  assert.equal(JSON.parse(updateRes.body).intent.description, 'edited')
+
+  const cancelRes = response()
+  await owner(makePost('/intents/cancel', { id: 'intent-1', expectedRevision: 2 }), cancelRes)
+  assert.equal(cancelRes.status, 200)
+  assert.equal(cancelledRevision, 2, 'HTTP must pass the numeric CAS revision to the Owner controller')
 
   const activityRes = response()
   await owner(makePost('/activities/start', { targetSessionId: A, description: 'local work' }), activityRes)
@@ -235,6 +337,26 @@ test('PROD3 admin API requires same-origin owner and exposes only bounded Life v
   await owner(makePost('/backups', {}), backupRes)
   assert.equal(backupRes.status, 200)
   assert.equal(JSON.parse(backupRes.body).backup.fileName, 'life-backup-test.sqlite')
+
+  const workspacesRes = response()
+  await owner({ ...getReq, url: '/api/amadeus-life/workspaces' }, workspacesRes)
+  assert.equal(workspacesRes.status, 200)
+  assert.equal(JSON.parse(workspacesRes.body).workspaces[0].id, 'ws_life')
+
+  const bindRes = response()
+  await owner(makePost('/workspace/bind', { workspaceId: 'ws_life' }), bindRes)
+  assert.equal(bindRes.status, 200)
+  assert.equal(JSON.parse(bindRes.body).workspace.workspaceId, 'ws_life')
+
+  const activateRes = response()
+  await owner(makePost('/workspace/activate', { acknowledgeLegacy: true }), activateRes)
+  assert.equal(activateRes.status, 200)
+  assert.equal(JSON.parse(activateRes.body).workspace.activated, true)
+
+  const ruleRes = response()
+  await owner(makePost('/workspace/rule', { sessionId: A, mode: 'passive' }), ruleRes)
+  assert.equal(ruleRes.status, 200)
+  assert.equal(JSON.parse(ruleRes.body).rule.mode, 'passive')
 
   const malformedRes = response()
   await owner({
@@ -268,6 +390,21 @@ test('PROD3 admin API requires same-origin owner and exposes only bounded Life v
   }, controller)
   assert.equal(route.kind, 'prefix')
   assert.equal(route.path, '/api/amadeus-life')
+})
+
+test('PROD12 Owner intent edit and cancel derive scope from storage and enforce revision CAS', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'life-owner-intent-'))
+  const core = new LifeCore({ databasePath: join(dir, 'life.sqlite') })
+  try {
+    core.v1.bootstrapLocalIdentity({ targetSessionIds: [A] })
+    const created = core.v1.adminCreateIntent({ targetSessionId: A, description: 'GUI QA', reviewAt: '2099-01-01T00:00:00.000Z' })
+    const edited = core.v1.adminUpdateIntent(created.id, { expectedRevision: created.revision, description: 'GUI QA edited' })
+    assert.equal(edited.description, 'GUI QA edited')
+    assert.throws(() => core.v1.adminUpdateIntent(created.id, { expectedRevision: created.revision, description: 'stale' }), /revision/)
+    assert.throws(() => core.v1.adminCancelIntent(created.id, created.revision), /revision/)
+    const cancelled = core.v1.adminCancelIntent(created.id, edited.revision)
+    assert.equal(cancelled.status, 'cancelled')
+  } finally { core.close() }
 })
 
 test('PROD5 repeated mirror sync registers once and unload disposes every contribution', () => {
@@ -498,7 +635,7 @@ test('PROD8 rendered preset labels keep 本地活动/Local activity while budget
 test('PROD4 package manifest includes Host, client, schema, locale, docs, and explicit version', () => {
   const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
   assert.equal(manifest.name, '@amadeus/life')
-  assert.equal(manifest.version, '1.0.1')
+  assert.equal(manifest.version, '1.1.0')
   assert.equal(manifest.exports['./client'], './lib/client.js')
   assert.equal(manifest.dsh.client.platform, 'web')
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-settings'))

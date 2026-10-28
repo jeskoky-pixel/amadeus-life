@@ -168,6 +168,44 @@ export function createHandler(controller) {
         const result = controller.createBackup()
         return send(res, 200, { ok: true, backup: result })
       }
+      if (req.method === 'GET' && path === '/workspaces') {
+        return send(res, 200, { ok: true, workspaces: controller.listWorkspaces() })
+      }
+      if (req.method === 'GET' && path === '/workspace') {
+        return send(res, 200, { ok: true, workspace: controller.getWorkspace() })
+      }
+      if (req.method === 'POST' && path === '/workspace/bind') {
+        const body = await readBody(req)
+        return send(res, 200, {
+          ok: true,
+          workspace: controller.bindWorkspace({
+            workspaceId: body.workspaceId,
+            personaName: body.personaName === undefined ? 'Amadeus' : body.personaName,
+          }),
+        })
+      }
+      if (req.method === 'POST' && path === '/workspace/activate') {
+        const body = await readBody(req)
+        return send(res, 200, {
+          ok: true,
+          workspace: controller.activateWorkspace({ acknowledgeLegacy: body.acknowledgeLegacy === true }),
+        })
+      }
+      if (req.method === 'POST' && path === '/workspace/rule') {
+        const body = await readBody(req)
+        return send(res, 200, {
+          ok: true,
+          rule: await controller.setSessionRule({
+            sessionId: body.sessionId,
+            mode: body.mode,
+            wakeLimit: body.wakeLimit,
+            tokenLimit: body.tokenLimit,
+            activityLimit: body.activityLimit,
+            quietStartHour: body.quietStartHour,
+            quietEndHour: body.quietEndHour,
+          }),
+        })
+      }
       if (req.method === 'POST' && path === '/intents/create') {
         const body = await readBody(req)
         const result = controller.createIntent({
@@ -203,6 +241,17 @@ export function createHandler(controller) {
       if (req.method === 'POST' && path === '/intents/cancel') {
         const body = await readBody(req)
         const result = controller.cancelIntent(body.id, body.expectedRevision)
+        return send(res, 200, { ok: true, intent: result })
+      }
+      if (req.method === 'POST' && path === '/intents/update') {
+        const body = await readBody(req)
+        const patch = {}
+        if (body.description !== undefined) patch.description = body.description
+        if (body.reviewAt !== undefined) patch.reviewAt = body.reviewAt
+        const result = controller.updateIntent(body.id, {
+          expectedRevision: body.expectedRevision,
+          ...patch,
+        })
         return send(res, 200, { ok: true, intent: result })
       }
       if (req.method === 'POST' && path === '/activities/action') {

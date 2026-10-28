@@ -108,7 +108,7 @@ test('E1 v6 schema and identity isolation with revocation invalidation', async (
   const clock = makeClock()
   const core = openCore(join(tempDir(), 'life.sqlite'), clock)
   try {
-    assert.equal(core.getHealth().schemaVersion, '9')
+    assert.equal(core.getHealth().schemaVersion, '10')
     const db = new DatabaseSync(core.databasePath)
     try {
       const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name))

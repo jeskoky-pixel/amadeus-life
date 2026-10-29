@@ -50,11 +50,11 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 
 ## 安装
 
-本仓库不修改任何 DSH profile。由安装者使用 Plugin Manager / `plugin_manager` 安装**版本化 tarball** `dist/amadeus-life-1.1.0.tgz`（或本目录）；不要手写 profile 的 `package.json` / `cordis.patch.yml`。在已安装 1.0.0 的环境中，重装同一路径的旧包可能不会替换已安装版本；请使用新的 1.1.0 路径，安装后核对已安装版本与文件，再重启/重载插件。
+本仓库不修改任何 DSH profile。v1.2 候选使用 Plugin Manager / `plugin_manager` 安装**版本化预构建包** `amadeus-life-1.2.0.tgz`；不要手写 profile 的 `package.json` / `cordis.patch.yml`。升级时使用新版本包，安装后核对版本与数据路径，再重启/重载插件。
 
 - 包：`@amadeus/life`，`type: module`，无运行时依赖、无安装脚本。
 - Bundle patch：`cordis.patch.yml` 插入 `amadeus-life` 行。
-- 未声明 license；许可证待定，不因主仓库选择 MIT 而自动继承授权。
+- 本仓库经所有者确认采用 [MIT 许可证](LICENSE)；v1.2 保留 `private:true`，发行源计划为固定版本 GitHub Release 包。
 
 ## 配置
 
@@ -137,4 +137,4 @@ node test/life-v1.test.js
 
 ## 发布与隐私
 
-安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)。许可证尚待明确。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。
+安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)。本仓库采用 [MIT 许可证](LICENSE)，v1.2 候选不走 npm 发布；公开 GitHub Release 和市场收录仍需发行确认。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。

@@ -1,8 +1,10 @@
-# amadeus-life
+# Amadeus Life 1.2.0（发行候选）
+
+预构建 DSH Bundle 已在官方 DSH Desktop `0.2.1-rc.3` 附带运行时的隔离 Profile 中验证安装和升级。公开 npm 与市场收录尚未执行。普通用户的安装、升级、卸载和数据保留步骤见 [v1.2 安装说明](docs/INSTALL_V1_2.md)、[升级政策](docs/UPGRADE_POLICY.md) 和 [数据迁移](docs/DATA_MIGRATION.md)。
 
 Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住待办意图，在合适的时间提醒 DSH 重新思考，并管理活动、注意力和自主运行预算。
 
-> **1.1.0 已通过 [PR #4](https://github.com/jeskoky-pixel/amadeus-life/pull/4) 合并 main**，作为个人电脑实机测试的开发基线。尚未公开发行、部署生产 DSH 或连接真实外部活动 Provider；真实 QQ 外发联合验收仍待完成，见 [四插件报告](https://github.com/jeskoky-pixel/amadeus-qq/blob/main/docs/verification/FOUR_PLUGIN_V11_JOINT_2026-10-28.md)。
+> 历史基线：1.1.0 经 [PR #4](https://github.com/jeskoky-pixel/amadeus-life/pull/4) 合并，四插件联合验收见 [历史报告](https://github.com/jeskoky-pixel/amadeus-qq/blob/main/docs/verification/FOUR_PLUGIN_V11_JOINT_2026-10-28.md)。
 
 ## 使用者可以做什么
 

@@ -1,6 +1,6 @@
 {
   "name": "@amadeus/life",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "license": "UNLICENSED",
   "description": "Amadeus Life: durable intents, activities, autonomous wake, budgets, and a native DSH settings page.",
@@ -30,7 +30,15 @@
     "docs/UPGRADE.md",
     "docs/BACKUP.md",
     "docs/BUILD.md",
-    "docs/RELEASE_NOTES.md"
+    "docs/RELEASE_NOTES.md",
+    "docs/UPGRADE_POLICY.md",
+    "docs/DATA_MIGRATION.md",
+    "docs/RELEASE_CHECKLIST.md",
+    "docs/INSTALL_V1_2.md",
+    "scripts/release-audit.mjs",
+    "screenshots.json",
+    "assets/market-icon.png",
+    "assets/screenshots/*.png"
   ],
   "dsh": {
     "manifestVersion": 1,
@@ -47,7 +55,7 @@
   },
   "engines": {
     "node": ">=22.13.0",
-    "dsh": ">=0.2.1-rc.2"
+    "dsh": ">=0.2.1-rc.3 <0.3.0"
   },
   "scripts": {
     "build": "node scripts/build-client.mjs",
@@ -56,7 +64,8 @@
     "check": "node scripts/build-client.mjs && node test/productization.test.js",
     "backup": "node scripts/life-backup.mjs",
     "verify:package": "node scripts/verify-package.mjs",
-    "package": "node scripts/verify-package.mjs && node scripts/package.mjs"
+    "package": "node scripts/verify-package.mjs && node scripts/package.mjs",
+    "verify:release": "node scripts/release-audit.mjs"
   },
   "keywords": [
     "dsh-plugin",

@@ -635,7 +635,7 @@ test('PROD8 rendered preset labels keep 本地活动/Local activity while budget
 test('PROD4 package manifest includes Host, client, schema, locale, docs, and explicit version', () => {
   const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
   assert.equal(manifest.name, '@amadeus/life')
-  assert.equal(manifest.version, '1.1.0')
+  assert.equal(manifest.version, '1.2.0')
   assert.equal(manifest.exports['./client'], './lib/client.js')
   assert.equal(manifest.dsh.client.platform, 'web')
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-settings'))

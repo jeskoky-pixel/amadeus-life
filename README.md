@@ -52,9 +52,9 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 
 本仓库不修改任何 DSH profile。v1.2 候选使用 Plugin Manager / `plugin_manager` 安装**版本化预构建包** `amadeus-life-1.2.0.tgz`；不要手写 profile 的 `package.json` / `cordis.patch.yml`。升级时使用新版本包，安装后核对版本与数据路径，再重启/重载插件。
 
-- 包：`@amadeus/life`，`type: module`，无运行时依赖、无安装脚本。
+- 包：`@fg-lab/amadeus-life`，`type: module`，无运行时依赖、无安装脚本。
 - Bundle patch：`cordis.patch.yml` 插入 `amadeus-life` 行。
-- 本仓库经所有者确认采用 [MIT 许可证](LICENSE)；v1.2 保留 `private:true`，发行源计划为固定版本 GitHub Release 包。
+- 本仓库经所有者确认采用 [MIT 许可证](LICENSE)；v1.2 发行包使用公开 npm Scope `@fg-lab`，并保留固定版本 GitHub Release 安装源。
 
 ## 配置
 
@@ -137,4 +137,4 @@ node test/life-v1.test.js
 
 ## 发布与隐私
 
-安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)。本仓库采用 [MIT 许可证](LICENSE)，v1.2 候选不走 npm 发布；公开 GitHub Release 和市场收录仍需发行确认。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。
+安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)。本仓库采用 [MIT 许可证](LICENSE)，v1.2 使用公开 npm Scope `@fg-lab`；GitHub Release、npm 实际发布和市场收录以发行验收报告为准。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。

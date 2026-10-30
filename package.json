@@ -1,7 +1,6 @@
 {
-  "name": "@amadeus/life",
+  "name": "@fg-lab/amadeus-life",
   "version": "1.2.0",
-  "private": true,
   "license": "MIT",
   "description": "Amadeus Life: durable intents, activities, autonomous wake, budgets, and a native DSH settings page.",
   "type": "module",
@@ -76,5 +75,16 @@
     "intents",
     "activities",
     "autonomy"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeskoky-pixel/amadeus-life.git"
+  },
+  "homepage": "https://github.com/jeskoky-pixel/amadeus-life#readme",
+  "bugs": {
+    "url": "https://github.com/jeskoky-pixel/amadeus-life/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

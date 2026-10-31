@@ -924,10 +924,10 @@ function Panel({ ctx }) {
 }
 
 function isLifeSubject(subject) {
-  if (!subject || typeof subject !== 'object' || subject.pkg?.name !== '@amadeus/life') return false;
+  if (!subject || typeof subject !== 'object' || subject.pkg?.name !== '@fg-lab/amadeus-life') return false;
   if (subject.kind === 'bundle') return true;
   if (subject.kind === 'row') {
-    return subject.row?.moduleName === '@amadeus/life' || subject.row?.rowId === 'amadeus-life';
+    return subject.row?.moduleName === '@fg-lab/amadeus-life' || subject.row?.rowId === 'amadeus-life';
   }
   return subject.kind === 'item';
 }
@@ -1095,7 +1095,7 @@ return {
       try {
         disposers.push(ctx.slots.inject('plugins.row.config', () =>
           ctx.slots.register(
-            { name: 'plugins.row.config', key: '@amadeus/life#amadeus-life' },
+            { name: 'plugins.row.config', key: '@fg-lab/amadeus-life#amadeus-life' },
             (props) => (props?.view === 'summary' ? h(DetailCard, { ctx }) : h(Panel, { ctx })),
           )));
       } catch (error) {

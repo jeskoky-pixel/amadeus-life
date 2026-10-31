@@ -3,4 +3,4 @@
 # runtime profile by hand.
 - insert:
     - id: amadeus-life
-      name: '@amadeus/life'
+      name: '@fg-lab/amadeus-life'

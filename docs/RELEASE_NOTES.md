@@ -1,5 +1,12 @@
 # Amadeus Life release notes
 
+## 1.2.0 internal release candidate (not publicly released)
+
+- Align `@fg-lab/amadeus-life@1.2.0` while preserving the `amadeus-life` Bundle ID, workspace binding, activities, intents, wake rules and budgets. This release focuses on packaging and upgrade safety.
+- Ship a prebuilt Client, Bundle Manifest, market assets and migration guidance. An isolated DSH Desktop `0.2.1-rc.3` CLI upgrade from 1.1.0 preserved synthetic data through restart, uninstall and reinstall.
+- The owner chose MIT for this repository. v1.2 is prepared for public npm distribution under `@fg-lab` and a fixed GitHub Release package; publication remains subject to final acceptance.
+- Desktop graphical installation, public Market delivery and live autonomous wake/QQ handoff remain unverified. Public distribution awaits release approval.
+
 ## 1.1.0 — 2026-10-28
 
 Workspace-scoped Life scheduling and independent console.

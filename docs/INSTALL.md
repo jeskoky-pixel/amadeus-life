@@ -10,9 +10,9 @@
 
 ```js
 pluginManager.installBundle(absoluteTarballPath, { enabled: true })
-pluginManager.setBundleEnabled('@amadeus/life', false) // 禁用并清理运行资源
-pluginManager.setBundleEnabled('@amadeus/life', true)  // 重新加载，恢复持久状态
-pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留数据供显式管理
+pluginManager.setBundleEnabled('@fg-lab/amadeus-life', false) // 禁用并清理运行资源
+pluginManager.setBundleEnabled('@fg-lab/amadeus-life', true)  // 重新加载，恢复持久状态
+pluginManager.removeBundle('@fg-lab/amadeus-life')           // 卸载插件；保留数据供显式管理
 ```
 
 以上操作均在隔离真实 Desktop 测试过。检查结果中的 application 和错误；pnpm exit 0 不等于激活成功。安装需要经过认证的管理员连接；普通 Workspace Write Agent 不因此获得配置管理或 Full Access。Desktop profile 由 Electron 管理，不要套用 CLI 修改生产 desktop profile。
@@ -23,7 +23,7 @@ pluginManager.removeBundle('@amadeus/life')           // 卸载插件；保留�
 
 ## 配置
 
-默认 bundle 插入 id=amadeus-life、name=@amadeus/life。Plugin Manager/Config Forms 使用同一套扁平字段；手工声明时为：
+默认 bundle 插入 id=amadeus-life、name=@fg-lab/amadeus-life。Plugin Manager/Config Forms 使用同一套扁平字段；手工声明时为：
 
 ```yaml
 - id: amadeus-life

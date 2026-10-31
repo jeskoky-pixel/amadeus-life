@@ -1,8 +1,10 @@
-# amadeus-life
+# Amadeus Life 1.2.0（发行候选）
+
+预构建 DSH Bundle 已在官方 DSH Desktop `0.2.1-rc.3` 附带运行时的隔离 Profile 中验证安装和升级。公开 npm 与市场收录尚未执行。普通用户的安装、升级、卸载和数据保留步骤见 [v1.2 安装说明](docs/INSTALL_V1_2.md)、[升级政策](docs/UPGRADE_POLICY.md) 和 [数据迁移](docs/DATA_MIGRATION.md)。
 
 Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住待办意图，在合适的时间提醒 DSH 重新思考，并管理活动、注意力和自主运行预算。
 
-> **1.1.0 已通过 [PR #4](https://github.com/jeskoky-pixel/amadeus-life/pull/4) 合并 main**，作为个人电脑实机测试的开发基线。尚未公开发行、部署生产 DSH 或连接真实外部活动 Provider；真实 QQ 外发联合验收仍待完成，见 [四插件报告](https://github.com/jeskoky-pixel/amadeus-qq/blob/main/docs/verification/FOUR_PLUGIN_V11_JOINT_2026-10-28.md)。
+> 历史基线：1.1.0 经 [PR #4](https://github.com/jeskoky-pixel/amadeus-life/pull/4) 合并，四插件联合验收见 [历史报告](https://github.com/jeskoky-pixel/amadeus-qq/blob/main/docs/verification/FOUR_PLUGIN_V11_JOINT_2026-10-28.md)。
 
 ## 使用者可以做什么
 
@@ -48,11 +50,11 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 
 ## 安装
 
-本仓库不修改任何 DSH profile。由安装者使用 Plugin Manager / `plugin_manager` 安装**版本化 tarball** `dist/amadeus-life-1.1.0.tgz`（或本目录）；不要手写 profile 的 `package.json` / `cordis.patch.yml`。在已安装 1.0.0 的环境中，重装同一路径的旧包可能不会替换已安装版本；请使用新的 1.1.0 路径，安装后核对已安装版本与文件，再重启/重载插件。
+本仓库不修改任何 DSH profile。v1.2 候选使用 Plugin Manager / `plugin_manager` 安装**版本化预构建包** `amadeus-life-1.2.0.tgz`；不要手写 profile 的 `package.json` / `cordis.patch.yml`。升级时使用新版本包，安装后核对版本与数据路径，再重启/重载插件。
 
-- 包：`@amadeus/life`，`type: module`，无运行时依赖、无安装脚本。
+- 包：`@fg-lab/amadeus-life`，`type: module`，无运行时依赖、无安装脚本。
 - Bundle patch：`cordis.patch.yml` 插入 `amadeus-life` 行。
-- 未声明 license；许可证待定，不因主仓库选择 MIT 而自动继承授权。
+- 本仓库经所有者确认采用 [MIT 许可证](LICENSE)；v1.2 发行包使用公开 npm Scope `@fg-lab`，并保留固定版本 GitHub Release 安装源。
 
 ## 配置
 
@@ -135,4 +137,4 @@ node test/life-v1.test.js
 
 ## 发布与隐私
 
-安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)。许可证尚待明确。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。
+安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)。本仓库采用 [MIT 许可证](LICENSE)，v1.2 使用公开 npm Scope `@fg-lab`；GitHub Release、npm 实际发布和市场收录以发行验收报告为准。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。

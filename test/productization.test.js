@@ -196,7 +196,7 @@ test('PROD2 built client is a compilable lazy module registering the native sett
     window: { __ModuleLoader__: { load(definition) { loaded = definition } } },
     console,
   })
-  assert.equal(loaded.id, '@amadeus/life')
+  assert.equal(loaded.id, '@fg-lab/amadeus-life')
   const React = { createElement: () => null }
   const plugin = loaded.factory((name) => (name === 'react' ? React : {}))
   assert.deepEqual([...plugin.inject], ['slots', 'configForms'])
@@ -228,7 +228,7 @@ test('PROD2 built client is a compilable lazy module registering the native sett
   assert.deepEqual([...configNamespace], ['amadeus-life'])
   assert.equal(registered.some((entry) => entry.name === 'settings.section' && entry.id === 'amadeus-life'), true)
   assert.equal(registered.some((entry) => entry.name === 'plugins.detail.section' && entry.id === 'amadeus-life-basic-config'), true)
-  assert.equal(registered.some((entry) => entry.name === 'plugins.row.config' && entry.key === '@amadeus/life#amadeus-life'), true)
+  assert.equal(registered.some((entry) => entry.name === 'plugins.row.config' && entry.key === '@fg-lab/amadeus-life#amadeus-life'), true)
 })
 
 test('PROD3 admin API requires same-origin owner and exposes only bounded Life views', async () => {
@@ -453,7 +453,7 @@ test('PROD5 repeated mirror sync registers once and unload disposes every contri
   assert.equal(active.size, 3)
   assert.equal(active.has('settings.section:amadeus-life'), true)
   assert.equal(active.has('plugins.detail.section:amadeus-life-basic-config'), true)
-  assert.equal(active.has('plugins.row.config:@amadeus/life#amadeus-life'), true)
+  assert.equal(active.has('plugins.row.config:@fg-lab/amadeus-life#amadeus-life'), true)
   for (const dispose of disposers) dispose()
   assert.equal(active.size, 0)
 })
@@ -634,8 +634,8 @@ test('PROD8 rendered preset labels keep 本地活动/Local activity while budget
 
 test('PROD4 package manifest includes Host, client, schema, locale, docs, and explicit version', () => {
   const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
-  assert.equal(manifest.name, '@amadeus/life')
-  assert.equal(manifest.version, '1.1.0')
+  assert.equal(manifest.name, '@fg-lab/amadeus-life')
+  assert.equal(manifest.version, '1.2.0')
   assert.equal(manifest.exports['./client'], './lib/client.js')
   assert.equal(manifest.dsh.client.platform, 'web')
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-settings'))

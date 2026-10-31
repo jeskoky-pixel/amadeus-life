@@ -20,7 +20,7 @@ if (body.includes('__LIFE_FIELDS__') || body.includes('__CLIENT_LOGIC__')) {
 if (/^\s*(import|export)\s/m.test(body)) throw new Error('client factory must not contain ESM statements')
 
 const bundle = `window.__ModuleLoader__.load({
-  id: '@amadeus/life',
+  id: '@fg-lab/amadeus-life',
   factory: (require) => {
     const React = require('react');
     const h = React.createElement;

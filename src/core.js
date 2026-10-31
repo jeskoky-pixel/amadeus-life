@@ -1139,13 +1139,14 @@ export class LifeCore {
            AND i.status = 'active'
            AND i.revision = e.intent_revision
            AND i.review_at <= ?
-           AND i.context_scope GLOB ?
+           AND (i.context_scope GLOB ? OR i.context_scope GLOB ?)
            AND i.authorization_ref = 'life-tool:' || i.context_scope
            AND NOT EXISTS (SELECT 1 FROM wake_requests w WHERE w.event_id = e.id)
          ORDER BY e.created_at ASC, e.id ASC
          LIMIT ?`,
         nowIso,
         DSH_SCOPE_GLOB,
+        DSH_SCOPE_GLOB.replace('session:session-', 'session:'),
         batch,
       )
       /** @type {Record<string, unknown>[]} */

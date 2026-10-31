@@ -238,3 +238,16 @@ test('BOOT4 invalid config is rejected and output files are exclusive', () => {
   const before = readFileSync(path, 'utf8')
   assert.match(before, /wakeDeliveryEnabled/)
 })
+
+
+test('trusted legacy QQ UUID sessions retain identity and bootstrap idempotently', () => {
+ const core=new LifeCore({databasePath:join(tempDir(),'legacy-qq.sqlite')});
+ const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ try {
+  core.v1.bootstrapLocalIdentity({targetSessionIds:[id,A]});
+  const before=core.v1.getSessionBinding(id);
+  core.v1.bootstrapLocalIdentity({targetSessionIds:[id,A]});
+  assert.deepEqual(core.v1.getSessionBinding(id),before);
+  assert.throws(()=>core.v1.bootstrapLocalIdentity({targetSessionIds:['not-a-session']}));
+ } finally {core.close()}
+});

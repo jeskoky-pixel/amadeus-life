@@ -1,4 +1,4 @@
-# Amadeus Life 1.2.0（发行候选）
+# Amadeus Life 1.2.1（发行候选）
 
 预构建 DSH Bundle 已在官方 DSH Desktop `0.2.1-rc.3` 附带运行时的隔离 Profile 中验证安装和升级。公开 npm 与市场收录尚未执行。普通用户的安装、升级、卸载和数据保留步骤见 [v1.2 安装说明](docs/INSTALL_V1_2.md)、[升级政策](docs/UPGRADE_POLICY.md) 和 [数据迁移](docs/DATA_MIGRATION.md)。
 
@@ -50,7 +50,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 
 ## 安装
 
-本仓库不修改任何 DSH profile。v1.2 候选使用 Plugin Manager / `plugin_manager` 安装**版本化预构建包** `amadeus-life-1.2.0.tgz`；不要手写 profile 的 `package.json` / `cordis.patch.yml`。升级时使用新版本包，安装后核对版本与数据路径，再重启/重载插件。
+本仓库不修改任何 DSH profile。v1.2 候选使用 Plugin Manager / `plugin_manager` 安装**版本化预构建包** `amadeus-life-1.2.1.tgz`；不要手写 profile 的 `package.json` / `cordis.patch.yml`。升级时使用新版本包，安装后核对版本与数据路径，再重启/重载插件。
 
 - 包：`@fg-lab/amadeus-life`，`type: module`，无运行时依赖、无安装脚本。
 - Bundle patch：`cordis.patch.yml` 插入 `amadeus-life` 行。

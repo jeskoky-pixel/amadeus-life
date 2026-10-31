@@ -93,7 +93,7 @@ export const WAKE_STATUSES = Object.freeze([
 /** Allowed wake kinds for 0.2.0; idle wakes are deliberately absent. */
 export const WAKE_KINDS = Object.freeze(['intent_due'])
 
-const DSH_SESSION_SCOPE = /^session:session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const DSH_SESSION_SCOPE = /^session:(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Whether a trusted scope is the exact DSH Session shape this segment may

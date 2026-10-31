@@ -571,3 +571,16 @@ test('C9 acknowledged local event cannot subsequently be claimed as a wake', () 
     core.close()
   }
 })
+
+
+test('legacy reserved UUID passes bounded wake prefilter without bypassing authorization',()=>{
+ const clock=makeClock(),core=openCore(join(tempDir(),'legacy.sqlite'),clock);
+ const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',scope='session:'+id;
+ try {
+  createDueIntent(core,clock,scope,'life-tool:'+scope);
+  createDueIntent(core,clock,'session:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','untrusted');
+  core.tick();const result=core.prepareDueWakes();
+  assert.equal(result.created.length,1);
+  assert.equal(result.created[0].targetSessionId,id);
+ } finally {core.close()}
+});

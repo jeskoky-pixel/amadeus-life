@@ -38,7 +38,10 @@
     "scripts/release-audit.mjs",
     "screenshots.json",
     "assets/market-icon.png",
-    "assets/screenshots/*.png"
+    "assets/screenshots/*.png",
+    "README.zh-CN.md",
+    "REFERENCE.md",
+    "docs/PUBLISHING.md"
   ],
   "dsh": {
     "manifestVersion": 1,

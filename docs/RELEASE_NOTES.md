@@ -2,6 +2,8 @@
 
 Real official Host integration exposed reserved QQ Session IDs without the usual `session-` prefix. QQ now reserves standard `session-UUID` IDs. Life also accepts the exact legacy UUID shape for existing trusted Sessions, including its bounded wake query and configuration UI. Workspace membership, trusted Host identity, permissions and wake authorization remain mandatory. Existing IDs and history are preserved; no schema change, Session recreation or production data migration. Public distribution is pending explicit release approval.
 
+- 修复设置页卸载时销毁 Host 共享表单的问题，关闭后重新打开仍可保存。
+- 修复 Desktop 序列化 Schema 将 UI 步长错误用作校验约束的问题；保留已有合法数值，不舍入、不重置配置。新增真实 Schemastery 与共享表单生命周期回归测试。
 # Amadeus Life release notes
 
 ## 1.2.0 internal release candidate (not publicly released)

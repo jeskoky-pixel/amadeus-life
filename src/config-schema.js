@@ -25,7 +25,8 @@ function fieldSchema(field) {
       if (typeof schema.max === 'function') schema.max(field.max)
       else schema.meta.maxLength = field.max
     }
-    if (field.step !== undefined && typeof schema.step === 'function') schema.step(field.step)
+    // field.step is a UI increment, not an accepted-value constraint.
+    // Publishing it as Schemastery step would reject existing Host-valid values.
     schema.description(`${field.zh.label} — ${field.zh.help}`)
   }
   if (field.default !== undefined) schema.default(field.default)

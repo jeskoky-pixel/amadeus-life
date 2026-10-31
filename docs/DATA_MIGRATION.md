@@ -2,7 +2,9 @@
 
 ## 当前格式
 
-- 发行包：`@fg-lab/amadeus-life@1.2.0`
+1.2.1 只修复 Session ID 兼容性，延续 1.2.0 数据结构；以下历史迁移路径继续适用。
+
+- 发行包：`@fg-lab/amadeus-life@1.2.1`
 - 持久 Schema Version：SQLite `meta.schema_version = 10` (`src/model.js`)
 - 数据范围：`databasePath` 指向的独立 SQLite/WAL/SHM（默认 `$DSH_HOME/amadeus-life/life.sqlite`），以及 DSH Profile 中的 Workspace、唤醒和 Provider 配置。
 - 本轮迁移：1.1.0 → 1.2.0 不改变 schema。既有 v2–v9 增量迁移只在健康旧库上运行；未知/损坏 schema 拒绝使用而不创建空库。

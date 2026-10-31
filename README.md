@@ -10,7 +10,7 @@ Target package: **`@fg-lab/amadeus-life@1.2.1`**. Tested runtime baseline: offic
 
 ## Release status
 
-Productization candidate. Public npm and GitHub Release publication are pending release gates and npm account authorization. A version in this README is not evidence of publication. See [publishing policy](docs/PUBLISHING.md).
+**1.2.1 is published:** [GitHub Release](https://github.com/jeskoky-pixel/amadeus-life/releases/tag/v1.2.1) · [npm](https://www.npmjs.com/package/@fg-lab/amadeus-life). Install the pinned version and verify the release checksum. Later main changes do not change this immutable archive. See [publishing policy](docs/PUBLISHING.md).
 
 ## What you can do
 

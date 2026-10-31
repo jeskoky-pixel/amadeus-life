@@ -376,7 +376,7 @@ function Panel({ ctx }) {
     return () => {
       alive.current = false;
       unsubscribe();
-      try { form.dispose(); } catch { /* ignore */ }
+      // configForms.get() returns a Host-owned shared controller. Only unsubscribe this view.
     };
   }, [ctx, loadData, t]);
 
@@ -980,7 +980,7 @@ function DetailCard({ ctx }) {
     return () => {
       alive = false;
       unsubscribe();
-      try { form.dispose(); } catch { /* ignore */ }
+      // configForms.get() returns a Host-owned shared controller. Only unsubscribe this view.
     };
   }, [ctx, loadStatus, t]);
 

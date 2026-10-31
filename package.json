@@ -1,6 +1,6 @@
 {
   "name": "@fg-lab/amadeus-life",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "license": "MIT",
   "description": "Amadeus Life: durable intents, activities, autonomous wake, budgets, and a native DSH settings page.",
   "type": "module",

@@ -42,7 +42,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 - **持久化**：`node:sqlite` + WAL + `BEGIN IMMEDIATE` + 唯一约束 + revision CAS；schema v9 为 v2–v8 的增量迁移；损坏或未知 schema 明确报错，绝不替换为空库。
 - **单运行时所有权**：适配器持有 SQLite lease；第二个仍在运行的适配器以明确健康状态失败关闭，不会执行启动恢复；只有持有者可释放；仅当记录的 PID 可证已死时才接管陈旧 lease。
 - **模块解耦**：运行时不 import 任何 QQ、Memory、State、Browser、Bilibili、Android、Games 或其他插件内部代码；源码 import 审计见测试 T10/T11。
-- **原生 DSH 设置页**：`dsh.client` 加载 `./client`，在 Settings 左侧注册 **Amadeus Life**；所有 23 个 Config 字段均为 volatile，满足 DSH `dsh-settings` 的表单投影/`whileServed` 契约；同时注册 `plugins.row.config` 配置页和 `plugins.detail.section` 基础配置卡。页面提供总览、首次配置向导（Core/Autonomous/Local Activity）、Session allowlist/binding 管理、意图、活动、预算与诊断。页面通过 owner-authenticated same-origin `/api/amadeus-life` 访问宿主，不直连 SQLite；配置保存/取消/恢复默认/冲突使用同一 Config Schema 与 Config Forms。字段为重启生效：保存后重启/重载插件才改变调度与工具，页面明确提示，不伪装即时生效。
+- **原生 DSH 设置页**：`dsh.client` 加载 `./client`，在 Settings 左侧注册 **Amadeus Life**；所有 24 个 Config 字段均为 volatile，满足 DSH `dsh-settings` 的表单投影/`whileServed` 契约；同时注册 `plugins.row.config` 配置页和 `plugins.detail.section` 基础配置卡。页面提供总览、首次配置向导（Core/Autonomous/Local Activity）、Session allowlist/binding 管理、意图、活动、预算与诊断。页面通过 owner-authenticated same-origin `/api/amadeus-life` 访问宿主，不直连 SQLite；配置保存/取消/恢复默认/冲突使用同一 Config Schema 与 Config Forms。字段为重启生效：保存后重启/重载插件才改变调度与工具，页面明确提示，不伪装即时生效。
 - **产品化交付**：版本 `1.0.0`；`npm run build` 生成 `lib/client.js`，`npm run package` 生成 `dist/amadeus-life-1.0.0.tgz`、SHA-256 与包元数据。安装、升级、备份/回滚见用户指南。
 
 ## 安装（尚未在本会话执行）
@@ -62,6 +62,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 | `databasePath` | `$DSH_HOME/amadeus-life/life.sqlite` | SQLite 账本绝对路径；留空使用默认路径，修改需重启 |
 | `tickIntervalMs` / `maxReviewBatch` | `1000` / `20` | Host tick 与每次到期复查上限；`0` 关闭自动 tick |
 | `wakeDeliveryEnabled` / `allowedSessionIds` | 关闭 / `[]` | 自主 Host wake 与合法 Session allowlist；默认关闭 |
+| `externalMessageSessionIds` | `[]` | 必须是 `allowedSessionIds` 的子集；仅为当前工具来源的 intent wake 提供外发提示，idle wake 保持静默 |
 | `wakeIntervalSeconds` / `maxPerDrive` | `60` / `1` | 低频检查节拍与单次投递上限 |
 | `idleEnabled` / `idleTargetSessionId` | 关闭 / 空 | 空闲机会及目标（须在 allowlist） |
 | `idleWindowMinutes` / `quietAfterActivityMinutes` | `30` / `5` | idle 窗口与活动后安静期 |
@@ -79,7 +80,7 @@ Amadeus Life 是 DeepSeek Harness 的独立生活调度插件。它帮你记住�
 
 - Host 服务 `ctx.life`：既有意图/活动/事件/wake 证据方法，以及 v1.0 trusted 方法 `createPersona`、`createScene`、`bindSession`、`grantSceneShare`、`revokeSessionBinding`、`allocateIdleWake`、`noteSessionActivity`、`configureBudget`、`getBudget`、`consumeWakeBudget`、`recordTokenUsage`、`reserveCost`、`settleCost`、`releaseCost`、`getCostReservation`、`registerActivityProvider`、`startActivity`、`pauseActivity`、`resumeActivity`、`checkpointActivity`、`cancelActivity`、`reconcileActivity`。这些方法不注册为模型工具。
 - 模型工具默认仍为 9 个：`life_intent_create`、`life_intent_get`、`life_intent_list`、`life_intent_update`、`life_intent_cancel`、`life_activity_record`、`life_activity_get`、`life_activity_transition`、`life_health`。启用 `activityTools` 后增加 `life_activity_start/status/pause/resume/cancel/finish` 六个受控工具；启用 `sharedRead` 后增加 `life_shared_read`。新工具不接受 `scope/personaId/sceneId/principalId/providerId/trustedEvidence/evidenceRefs` 等越权字段，身份与 owner scope 从当前 Session binding 派生。
-- 默认关闭意味着不注册新工具、不投递 idle、不启动 Provider；管理员显式启用后仍不会真实外发平台消息。
+- 默认关闭意味着不注册新工具、不投递 idle、不启动 Provider，也不提供外发提示。开启 `externalMessageSessionIds` 只改变符合条件的 wake 提示，不新增调度器、不绕过 QQ 权限，也不会让 idle wake 自动发消息。
 - 参数边界由适配器强制执行（DSH 原生 `tools.register` 不校验 JSON Schema）：每个工具只允许其声明字段，`scope`、`ownerScope`、`contextScope`、`authorizationRef`、`trustedEvidence` 等保留字段与未知字段一律 `LIFE_VALIDATION` 拒绝；`life_intent_update` 只显式复制 `description`/`reviewAt`/`relatedActivityId`，不会把模型参数展开到授权字段上。
 - 事件：每次 tick 产生的事件通过 `ctx.emit('life/reconsideration', event)` 发布；payload 只含引用（`eventId`、`intentId`、`intentRevision`、`reviewAt`、`contextScope`、`relatedActivityId`、`delivery: 'local-only'`），不含意图描述、授权引用或待发送文本。授权方可通过 `getIntent` 读取描述。
 
@@ -132,3 +133,4 @@ node test/life-v1.test.js
 ## 发布与隐私
 
 安装与配置见 [单屏设置](docs/SETUP.md) 与 [INSTALL](docs/INSTALL.md)。许可证尚待明确。第三方代码在复用前核查许可并保留来源；不提交真实凭据、私聊、记忆、设备登录资料或未经授权素材。
+

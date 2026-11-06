@@ -176,6 +176,10 @@ export function validateAll(values, fields) {
   if (input.bootstrapEnabled === true && allowed.length === 0 && errors.bootstrapEnabled === undefined) {
     errors.bootstrapEnabled = 'bootstrapNeedsSessions';
   }
+  const external = Array.isArray(input.externalMessageSessionIds) ? input.externalMessageSessionIds : [];
+  if (external.some((id) => !allowed.includes(id)) && errors.externalMessageSessionIds === undefined) {
+    errors.externalMessageSessionIds = 'externalMessageNeedsAllowlist';
+  }
   const start = Number(input.quietStartHour);
   const end = Number(input.quietEndHour);
   const startSet = Number.isFinite(start) && start >= 0;
@@ -309,3 +313,4 @@ export function previewText(preview, lang) {
   }
   return `单个事件后的预计变化：心情 ${signed(before.mood)} → ${signed(after.mood)}，精力 ${before.energy} → ${after.energy}，好奇 ${before.curiosity} → ${after.curiosity}。预览不会写入数据库。`;
 }
+

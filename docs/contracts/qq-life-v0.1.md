@@ -4,7 +4,7 @@
 
 ## 归属与依赖
 
-QQ 独占入站去重、消息水位、持续交流、发送队列与回执；Life 独占未来意图与自主活动调度。Life 不调用 mark_read、不推进 QQ 水位、不直接发送 QQ，不另建主推理循环。Life 缺失时 QQ 连续对话继续。普通用户消息不额外经过一次全局调度模型。
+QQ 独占入站去重、消息水位、持续交流、发送队列与回执；Life 独占未来意图与自主活动调度。Life 不调用 mark_read、不推进 QQ 水位、不另建主推理循环，也不直连 QQ 传输。管理员可对 allowlist 内的 Session 开启 `wakeDelivery.externalMessageSessionIds`，这只允许符合当前工具来源 intent provenance 的 wake 提示模型可以考虑外发；实际发送仍必须经过 QQ Session 自己的 `qq_send_message`、Scene 权限、发送队列与回执。Life 缺失时 QQ 连续对话继续。普通用户消息不额外经过一次全局调度模型。
 
 ## 旁路事件
 
@@ -61,7 +61,7 @@ type WakeAck = {
 
 `cancelWake({requestId, intentionRevision})` 返回 `cancelled | already_running | settled | unknown`。已运行不能伪报取消完成，应通过活动取消路径请求停止。新消息、共享撤回或意图改期使旧版本失效，出队和外发前再次检查；无法保证校验与外发原子性时，由出口网关拒绝旧授权，不仅靠调度前检查。
 
-QQ 接受唤醒后走正常 DSH 场景入口，模型可以继续活动或保持安静。无 Life 时不影响这个入口处理正常用户输入。
+QQ 接受唤醒后走正常 DSH 场景入口，模型可以继续活动、保持安静，或在该 intent 确实需要且外发提示已 opt-in 时使用自身 `qq_send_message`。idle wake 和未 opt-in wake 明确要求静默。无 Life 时不影响这个入口处理正常用户输入。
 
 ## 活动提供器
 
@@ -96,3 +96,4 @@ QQ 的发送事实来源仍为 `DeliveryReceipt(actionId, sceneId, providerId, p
 3. 旧意图改期、到期、新消息、撤权后排队请求被拒或重算。
 4. 多场景、迟到结果、unknown 回执、预算/账本/策略故障均有正反例。
 5. 取消与完成竞争、重连和实际 NapCat 链路分别验证；演示校验器通过不等于以上通过。
+

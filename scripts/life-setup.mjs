@@ -51,6 +51,7 @@ export function buildSetup({
   const config = {
     wakeDeliveryEnabled: false,
     allowedSessionIds: allowed,
+    externalMessageSessionIds: [],
     wakeIntervalSeconds: 60,
     maxPerDrive: 1,
     idleEnabled: false,
@@ -198,3 +199,4 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1].rep
     process.exitCode = 1
   }
 }
+

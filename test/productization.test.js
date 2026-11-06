@@ -24,7 +24,7 @@ const A = 'session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const B = 'session-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 
 test('PROD1 Config schema and flat normalization are authoritative and validated', () => {
-  assert.equal(CONFIG_FIELDS.length, 23)
+  assert.equal(CONFIG_FIELDS.length, 24)
   assert.equal(CONFIG_DEFAULTS.wakeDeliveryEnabled, false)
   assert.equal(CONFIG_DEFAULTS.bootstrapEnabled, false)
   const valid = Config['~standard'].validate(CONFIG_DEFAULTS)
@@ -48,6 +48,7 @@ test('PROD1 Config schema and flat normalization are authoritative and validated
   })
   assert.equal(autonomous.wakeDelivery.enabled, true)
   assert.deepEqual(autonomous.wakeDelivery.allowedSessionIds, [A, B])
+  assert.deepEqual(autonomous.wakeDelivery.externalMessageSessionIds, [])
   assert.equal(autonomous.wakeDelivery.intervalMs, 90_000)
   assert.equal(autonomous.idle.targetSessionId, A)
   assert.equal(autonomous.activityTools.enabled, false)
@@ -61,6 +62,10 @@ test('PROD1 Config schema and flat normalization are authoritative and validated
   assert.throws(
     () => normalizeLifeConfig({ ...CONFIG_DEFAULTS, bootstrapEnabled: true, allowedSessionIds: [] }),
     /bootstrapEnabled/,
+  )
+  assert.throws(
+    () => normalizeLifeConfig({ ...CONFIG_DEFAULTS, allowedSessionIds: [A], externalMessageSessionIds: [B] }),
+    /externalMessageSessionIds/,
   )
   assert.ok(Config['~standard'].validate({ ...CONFIG_DEFAULTS, maxPerDrive: 99 }).issues?.length > 0)
 })
@@ -459,3 +464,4 @@ test('PROD4 package manifest includes Host, client, schema, locale, docs, and ex
   assert.ok(existsSync(join(process.cwd(), 'icon.svg')))
   assert.ok(existsSync(join(process.cwd(), 'locale', 'zh.json')))
 })
+

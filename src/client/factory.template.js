@@ -91,7 +91,7 @@ const DICT = {
     invalidString: '必须是文本。', tooLong: '文本过长。', invalidArray: '必须是列表。', tooManyItems: '列表项过多。',
     invalidArrayItem: '列表项必须是非空文本。', invalidSessionId: '必须是合法的 DSH Session id。', invalidChoice: '不是允许的选项。',
     belowMin: '小于允许的最小值。', aboveMax: '大于允许的最大值。', idleTargetNotAllowed: 'Idle 目标必须位于 Session allowlist。',
-    allowlistRequired: '启用自主唤醒前必须填写至少一个 Session。', bootstrapNeedsSessions: '启用 bootstrap 前必须填写至少一个 Session。',
+    allowlistRequired: '启用自主唤醒前必须填写至少一个 Session。', bootstrapNeedsSessions: '启用 bootstrap 前必须填写至少一个 Session。', externalMessageNeedsAllowlist: '主动发话 Session 必须位于 Session allowlist。',
     quietHoursPair: '安静时段开始和结束必须同时填写，或同时设为 -1。',
     unsaved: '有未保存的修改。', readOnly: '当前配置只读。', reload: '载入最新值', confirmDefaults: '恢复默认参数？不会删除意图、活动、预算或历史。', done: '完成。',
     setupFailed: '首次配置失败：', setupReady: '首次配置已完成。', noPermission: '只有已认证的 DSH 所有者可以管理 Life。', disconnected: 'Host 未连接或设置 API 不可用。',
@@ -134,7 +134,7 @@ const DICT = {
     invalidString: 'Must be text.', tooLong: 'Text is too long.', invalidArray: 'Must be a list.', tooManyItems: 'Too many list items.',
     invalidArrayItem: 'Each list item must be non-empty text.', invalidSessionId: 'Must be a valid DSH Session id.', invalidChoice: 'Not an allowed choice.',
     belowMin: 'Below the allowed minimum.', aboveMax: 'Above the allowed maximum.', idleTargetNotAllowed: 'The idle target must be in the Session allowlist.',
-    allowlistRequired: 'Add at least one Session before enabling autonomous wake.', bootstrapNeedsSessions: 'Add at least one Session before enabling bootstrap.',
+    allowlistRequired: 'Add at least one Session before enabling autonomous wake.', bootstrapNeedsSessions: 'Add at least one Session before enabling bootstrap.', externalMessageNeedsAllowlist: 'Messaging Sessions must be in the Session allowlist.',
     quietHoursPair: 'Set both quiet-hour bounds, or set both to -1.',
     unsaved: 'Unsaved changes.', readOnly: 'Configuration is read-only.', reload: 'Load latest', confirmDefaults: 'Restore defaults? Intents, activities, budgets, and history are not deleted.', done: 'Done.',
     setupFailed: 'First-run setup failed: ', setupReady: 'First-run setup completed.', noPermission: 'Only the authenticated DSH owner can manage Life.', disconnected: 'Host unavailable or settings API disconnected.',
@@ -910,3 +910,4 @@ return {
     }
   },
 };
+

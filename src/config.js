@@ -28,6 +28,7 @@ export function isFlatConfig(raw) {
     'maxPerDrive',
     'idleEnabled',
     'idleTargetSessionId',
+    'externalMessageSessionIds',
     'wakeBudgetEnabled',
     'activityToolsEnabled',
     'sharedReadEnabled',
@@ -73,6 +74,7 @@ export function normalizeLifeConfig(raw = {}) {
     }
   }
   const allowed = [...new Set(values.allowedSessionIds)]
+  const externalMessageSessionIds = [...new Set(values.externalMessageSessionIds)]
   for (const id of allowed) {
     if (!isDshSessionScope(`session:${id}`)) throw new LifeValidationError('allowedSessionIds must contain DSH Session ids')
   }
@@ -81,6 +83,9 @@ export function normalizeLifeConfig(raw = {}) {
   }
   if (values.bootstrapEnabled && allowed.length === 0) {
     throw new LifeValidationError('bootstrapEnabled requires allowedSessionIds')
+  }
+  if (externalMessageSessionIds.some((id) => !allowed.includes(id))) {
+    throw new LifeValidationError('externalMessageSessionIds must be in allowedSessionIds')
   }
   const hasStart = values.quietStartHour >= 0
   const hasEnd = values.quietEndHour >= 0
@@ -93,6 +98,7 @@ export function normalizeLifeConfig(raw = {}) {
     wakeDelivery: {
       enabled: values.wakeDeliveryEnabled,
       allowedSessionIds: allowed,
+      externalMessageSessionIds,
       intervalMs: values.wakeIntervalSeconds * 1000,
       maxPerDrive: values.maxPerDrive,
     },
@@ -131,3 +137,4 @@ export function publicConfig(raw = {}) {
 }
 
 export { CONFIG_DEFAULTS }
+

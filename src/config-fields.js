@@ -30,6 +30,16 @@ export const CONFIG_FIELDS = Object.freeze([
     en: { label: 'Allowed Session ids', help: 'Only these valid DSH Session ids may receive autonomous wake. Sessions are never enumerated or invented.' },
   },
   {
+    key: 'externalMessageSessionIds',
+    type: 'array',
+    itemType: 'string',
+    default: [],
+    restart: true,
+    group: 'common',
+    zh: { label: '允许主动发话的 Session', help: '必须是 allowlist 子集；仅为当前工具来源 intent wake 提供外发提示，idle wake 保持静默。' },
+    en: { label: 'Sessions allowed to consider messaging', help: 'Must be a subset of the allowlist; only intent wakes from the current Session get external-message guidance. Idle wakes stay silent.' },
+  },
+  {
     key: 'wakeIntervalSeconds',
     type: 'number',
     default: 60,
@@ -285,3 +295,4 @@ export function publicFieldMetadata() {
     en: field.en,
   }))
 }
+

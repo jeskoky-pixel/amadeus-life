@@ -36,11 +36,23 @@ Autonomous/activity presets include `bootstrapEnabled: true` and `bootstrapPerso
 
 In the DSH Plugin Manager / Loader config, set the generated object as the `config` of the `amadeus-life` row. Do not hand-edit a production profile; use the administrator's normal install/update path. The `databasePath` is optional; leave it default unless the administrator has a reason to move the SQLite file.
 
-`wakeDelivery.allowedSessionIds` is an **allowlist**: only these DSH Session ids can receive Life wake/idle delivery. Copy ids from the Session list; a wrong or empty list keeps autonomous delivery degraded/off. Never paste credentials or private content into config.
+`allowedSessionIds` is an **allowlist**: only these DSH Session ids can receive Life wake/idle delivery. Copy ids from the Session list; a wrong or empty list keeps autonomous delivery degraded/off. Never paste credentials or private content into config.
+
+如需允许 Life 在合适的 intent wake 中主动发话，把目标 Session 的 ID 同时放入 `externalMessageSessionIds`。它必须是 allowlist 的子集；该字段只改变 wake 提示，模型仍须在当前 QQ Scene 中使用已有的 `qq_send_message`，QQ 权限、发送账本和 OneBot 回执继续生效。idle wake 永远保持静默提示。
+
+```json
+{
+  "wakeDeliveryEnabled": true,
+  "allowedSessionIds": ["session-<qq-owner-session>"],
+  "externalMessageSessionIds": ["session-<qq-owner-session>"],
+  "wakeIntervalSeconds": 60,
+  "maxPerDrive": 1
+}
+```
 
 ## 4. First-run identity (automatic bootstrap)
 
-For Autonomous and Local activity, no manual Host JS is required: the generated `bootstrap` config creates the stable default Persona/private Scenes/bindings once. Private Scenes are never shared automatically.
+For Autonomous and Local activity, no manual Host JS is required: the generated `bootstrapEnabled` config creates the stable default Persona/private Scenes/bindings once. Private Scenes are never shared automatically.
 
 If you intentionally need a custom Persona/Scene, leave `bootstrap` disabled and use the trusted admin-only `ctx.life` path:
 
@@ -83,4 +95,5 @@ ctx.life.getHealth()
 - Safety boundaries and failure behavior: [ADR 0006](adr/0006-life-v1-identity-idle-budget-provider.md), [ADR 0007](adr/0007-activity-concurrency-paid-reservation.md), [ADR 0008](adr/0008-life-v1-final-hardening.md)
 - Ten-scenario test mapping: [V1_TEN_SCENARIOS](verification/V1_TEN_SCENARIOS.md)
 
-Autonomous delivery and activity/shared tools are **off by default**. No platform messages, payments, publication, or external Provider calls are implemented.
+Autonomous delivery, external-message guidance, and activity/shared tools are **off by default**. QQ remains the only platform sender; unknown deliveries are not retried automatically. Payments, publication, and external Activity Providers are not implemented.
+

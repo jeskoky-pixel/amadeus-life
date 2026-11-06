@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { LifeCore } from '../src/core.js'
 import { apply } from '../src/index.js'
-import { SNAPSHOT_SCAN_LIMIT } from '../src/wake-host.js'
+import { SNAPSHOT_SCAN_LIMIT, wakePrompt } from '../src/wake-host.js'
 
 const BASE = '2026-01-01T00:00:00.000Z'
 const SESSION_A = 'session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -148,6 +148,29 @@ function messageFor(record) {
   assert.equal(record.followups.length, 1)
   return record.followups[0]
 }
+
+test('external-message guidance is opt-in, intent-bound, and never enabled for idle wakes', () => {
+  const intentWake = { id: 'wake-1', origin: 'intent', intentId: 'intent-1', intentRevision: 1 }
+  const idleWake = { id: 'wake-2', origin: 'idle' }
+  assert.match(wakePrompt(intentWake), /Do not send external messages from this wake/)
+  assert.match(wakePrompt(intentWake, true), /External messages may be sent only if the current intent calls for them/)
+  assert.match(wakePrompt(idleWake, true), /Do not send external messages from this wake/)
+})
+
+test('external-message allowlist changes only the intent wake guidance', async () => {
+  const { life, clock, agents } = setup({
+    delivery: {
+      enabled: true,
+      allowedSessionIds: [SESSION_A],
+      externalMessageSessionIds: [SESSION_A],
+      intervalMs: 60_000,
+    },
+  })
+  const intent = seedDue(life, clock)
+  await life.driveDueWakesOnce()
+  assert.match(messageFor(agents.get(SESSION_A)).content[0].text, /External messages may be sent only if the current intent calls for them/)
+  assert.equal(intent.authorizationRef, `life-tool:session:${SESSION_A}`)
+})
 
 test('H1 delivery is disabled by default with zero Host calls', async () => {
   const { life, resolveCalls, agents, clock } = setup()
@@ -1111,3 +1134,4 @@ test('H17 withdrawing Host services during resolve prevents a late followup', as
   assert.equal(life.listWakes({ status: 'executed' }).length, 0)
   host.disposers.forEach((dispose) => dispose())
 })
+

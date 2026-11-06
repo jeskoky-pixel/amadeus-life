@@ -37,7 +37,7 @@
 
 ## Setup
 
-DSH Host plugins can expose a native `Config` schema. Life now does so with a dependency-free Standard Schema implementation and 23 flat fields shared by Plugin Manager and the native Settings page. `scripts/life-setup.mjs` emits that same flat shape (core/autonomous/activity); it never edits a profile or reads secrets, and `--out` uses exclusive create (`wx`). `docs/SETUP.md` remains the CLI path; `docs/USER_GUIDE.md` is the GUI path.
+DSH Host plugins can expose a native `Config` schema. Life now does so with a dependency-free Standard Schema implementation and 24 flat fields shared by Plugin Manager and the native Settings page. `scripts/life-setup.mjs` emits that same flat shape (core/autonomous/activity); it never edits a profile or reads secrets, and `--out` uses exclusive create (`wx`). `docs/SETUP.md` remains the CLI path; `docs/USER_GUIDE.md` is the GUI path.
 
 Autonomous/activity presets emit explicit `bootstrapEnabled:true` / `bootstrapPersonaName`. On activation, one stable Persona (`life_bootstrap_persona`), one deterministic private Scene per allowlisted Session, and one binding per Session are created in a single transaction. The same config is idempotent: existing correctly-bound Sessions cause no revision increment and no new rows; an existing different Persona/Scene fails closed with `setup.state:'failed'` / `reason:'bootstrap_failed'` and no mutation. Scenes are never shared automatically. Core-only emits no bootstrap. Target Sessions are the validated allowlist; model text cannot modify config or bindings. A custom identity remains possible by leaving bootstrap off and using the trusted admin `ctx.life` methods.
 
@@ -46,3 +46,4 @@ The Settings client calls a minimal owner-authenticated same-origin API (`/api/a
 ## Limits
 
 The isolated developer DB migrated v8→v9 with integrity and old-column preservation checks. A real isolated DSH Session completed an autonomous due turn and local Provider activity, recorded official usage, and rejected a legacy model tool attempt with `LIFE_UNAUTHORIZED`; zero Persona/global wake budget deferred later delivery. The generated first-run preset loaded on a separate isolated DB and restarted idempotently. External Provider/payment and platform delivery remain unverified. Codex independently ran the standard `node --test test/*.test.js` runner (161/161) and all 11 `npm test` groups. The Creator sandbox had an earlier `spawn EPERM` limitation.
+

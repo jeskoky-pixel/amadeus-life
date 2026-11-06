@@ -9,6 +9,7 @@ test('SETUP1 core preset is silent by default', () => {
   const result = buildSetup({ preset: 'core' })
   assert.deepEqual(PRESETS, ['core', 'autonomous', 'activity'])
   assert.equal(result.config.wakeDeliveryEnabled, false)
+  assert.deepEqual(result.config.externalMessageSessionIds, [])
   assert.equal(result.config.idleEnabled, false)
   assert.equal(result.config.activityToolsEnabled, false)
   assert.equal(result.config.bootstrapEnabled, false)
@@ -19,6 +20,7 @@ test('SETUP2 autonomous preset enables only the selected Session and idle target
   const result = buildSetup({ preset: 'autonomous', sessions: [A, B], idleWindowMinutes: 45 })
   assert.equal(result.config.wakeDeliveryEnabled, true)
   assert.deepEqual(result.config.allowedSessionIds, [A, B])
+  assert.deepEqual(result.config.externalMessageSessionIds, [])
   assert.equal(result.config.idleTargetSessionId, A)
   assert.equal(result.config.idleWindowMinutes, 45)
   assert.equal(result.config.activityLimit, 1)
@@ -47,4 +49,6 @@ test('SETUP4 invalid Session ids and idle targets are rejected', () => {
   )
   assert.throws(() => validateSetup({ activityToolsEnabled: 'yes' }), /activityToolsEnabled/)
   assert.throws(() => validateSetup({ bootstrapEnabled: true, allowedSessionIds: [] }), /bootstrapEnabled/)
+  assert.throws(() => validateSetup({ allowedSessionIds: [A], externalMessageSessionIds: [B] }), /externalMessageSessionIds/)
 })
+

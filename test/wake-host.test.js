@@ -1134,4 +1134,3 @@ test('H17 withdrawing Host services during resolve prevents a late followup', as
   assert.equal(life.listWakes({ status: 'executed' }).length, 0)
   host.disposers.forEach((dispose) => dispose())
 })
-

@@ -46,4 +46,3 @@ The Settings client calls a minimal owner-authenticated same-origin API (`/api/a
 ## Limits
 
 The isolated developer DB migrated v8→v9 with integrity and old-column preservation checks. A real isolated DSH Session completed an autonomous due turn and local Provider activity, recorded official usage, and rejected a legacy model tool attempt with `LIFE_UNAUTHORIZED`; zero Persona/global wake budget deferred later delivery. The generated first-run preset loaded on a separate isolated DB and restarted idempotently. External Provider/payment and platform delivery remain unverified. Codex independently ran the standard `node --test test/*.test.js` runner (161/161) and all 11 `npm test` groups. The Creator sandbox had an earlier `spawn EPERM` limitation.
-

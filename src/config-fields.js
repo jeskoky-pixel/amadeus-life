@@ -295,4 +295,3 @@ export function publicFieldMetadata() {
     en: field.en,
   }))
 }
-

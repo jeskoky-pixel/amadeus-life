@@ -1082,4 +1082,3 @@ export function apply(ctx, config = {}) {
     throw error
   }
 }
-

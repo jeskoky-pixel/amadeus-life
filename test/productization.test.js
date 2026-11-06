@@ -464,4 +464,3 @@ test('PROD4 package manifest includes Host, client, schema, locale, docs, and ex
   assert.ok(existsSync(join(process.cwd(), 'icon.svg')))
   assert.ok(existsSync(join(process.cwd(), 'locale', 'zh.json')))
 })
-

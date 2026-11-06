@@ -137,4 +137,3 @@ export function publicConfig(raw = {}) {
 }
 
 export { CONFIG_DEFAULTS }
-

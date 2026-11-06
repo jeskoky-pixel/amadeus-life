@@ -20,4 +20,3 @@ Life had a stable Host runtime but setup depended on JSON/admin JS. The product 
 - The client is optional: a Host without web/Connection services still runs, with the page showing a disconnected error.
 - A saved setting that changes wake/idle/budget construction may require plugin restart; the page labels these fields.
 - Real browser installation, click-through, and visual acceptance remain Codex's isolated-DSH task. Local tests validate schema/normalization, client compilation/registration, API auth/contracts, and package contents.
-

@@ -45,4 +45,3 @@ production deployment is made by these commands.
 - The admin API requires DSH `connection.admit` owner admission; older DSH versions without it leave the page disconnected.
 - Real payment, external Provider, platform delivery, and production migration authorization are not implemented.
 - `node --test` may hit the Windows sandbox `spawn EPERM`; use direct test files and `npm test` locally.
-

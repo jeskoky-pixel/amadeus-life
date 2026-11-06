@@ -96,4 +96,3 @@ QQ 的发送事实来源仍为 `DeliveryReceipt(actionId, sceneId, providerId, p
 3. 旧意图改期、到期、新消息、撤权后排队请求被拒或重算。
 4. 多场景、迟到结果、unknown 回执、预算/账本/策略故障均有正反例。
 5. 取消与完成竞争、重连和实际 NapCat 链路分别验证；演示校验器通过不等于以上通过。
-

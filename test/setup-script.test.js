@@ -51,4 +51,3 @@ test('SETUP4 invalid Session ids and idle targets are rejected', () => {
   assert.throws(() => validateSetup({ bootstrapEnabled: true, allowedSessionIds: [] }), /bootstrapEnabled/)
   assert.throws(() => validateSetup({ allowedSessionIds: [A], externalMessageSessionIds: [B] }), /externalMessageSessionIds/)
 })
-

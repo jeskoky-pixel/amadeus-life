@@ -96,4 +96,3 @@ ctx.life.getHealth()
 - Ten-scenario test mapping: [V1_TEN_SCENARIOS](verification/V1_TEN_SCENARIOS.md)
 
 Autonomous delivery, external-message guidance, and activity/shared tools are **off by default**. QQ remains the only platform sender; unknown deliveries are not retried automatically. Payments, publication, and external Activity Providers are not implemented.
-
